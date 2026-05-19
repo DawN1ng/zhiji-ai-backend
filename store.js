@@ -10,6 +10,7 @@ const memory = {
   memberships: [],
   analyticsEvents: [],
   errorLogs: [],
+  advisorUsage: [],
 };
 
 const MODEL_MAP = {
@@ -21,6 +22,7 @@ const MODEL_MAP = {
   memberships: { model: models.Membership, idKey: "membershipId" },
   analyticsEvents: { model: models.AnalyticsEvent, idKey: "eventId" },
   errorLogs: { model: models.ErrorLog, idKey: "errorId" },
+  advisorUsage: { model: models.AdvisorUsage, idKey: "usageId" },
 };
 
 function now() {
@@ -98,6 +100,14 @@ function pickColumns(listName, item) {
       userId: item.userId,
       openId: item.openId,
       message: item.message,
+    };
+  }
+  if (listName === "advisorUsage") {
+    return {
+      usageId: item.usageId,
+      userId: item.userId,
+      openId: item.openId,
+      usageDate: item.usageDate,
     };
   }
   return {};
@@ -180,6 +190,24 @@ async function filterByUser(listName, userId, openId) {
   return rows.map(serialize);
 }
 
+async function findOneByFields(listName, fields = {}) {
+  const config = MODEL_MAP[listName] || {};
+  const model = config.model;
+  const entries = Object.keys(fields).filter((key) => fields[key] !== undefined && fields[key] !== "");
+  if (!entries.length) return null;
+  if (!model) {
+    return memory[listName].find((item) => entries.every((key) => item[key] === fields[key])) || null;
+  }
+  const row = await model.findOne({
+    where: entries.reduce((memo, key) => {
+      memo[key] = fields[key];
+      return memo;
+    }, {}),
+    order: [["createdAt", "DESC"]],
+  });
+  return serialize(row);
+}
+
 async function removeByUser(listNames, userId, openId) {
   await Promise.all(listNames.map(async (listName) => {
     const config = MODEL_MAP[listName] || {};
@@ -205,6 +233,7 @@ module.exports = {
   createId,
   upsert,
   findById,
+  findOneByFields,
   filterByUser,
   removeByUser,
 };

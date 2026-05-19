@@ -3,7 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const { init: initDB, Counter } = require("./db");
-const { now, createId, upsert, findById, filterByUser, removeByUser } = require("./store");
+const { now, createId, upsert, findById, findOneByFields, filterByUser, removeByUser } = require("./store");
 const { callOpenAICompatible, buildAdvisorFallback } = require("./ai");
 
 const logger = morgan("tiny");
@@ -88,6 +88,64 @@ function getUserId(req) {
   return openId || sessionId || "guest";
 }
 
+function getTodayText() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getMembershipConfig() {
+  return {
+    freeAdvisorDailyLimit: 3,
+    memberAdvisorDailyLimit: 20,
+  };
+}
+
+async function getActiveMembership(userId, openId) {
+  const memberships = await filterByUser("memberships", userId, openId);
+  const nowTime = Date.now();
+  return memberships.find((item) => (
+    item.status === "active"
+    && item.expiresAt
+    && new Date(item.expiresAt).getTime() > nowTime
+  )) || null;
+}
+
+async function getAdvisorUsage(userId, openId) {
+  const usageDate = getTodayText();
+  const usage = await findOneByFields("advisorUsage", {
+    usageId: `${userId}_${usageDate}`,
+  });
+  return usage || {
+    usageId: `${userId}_${usageDate}`,
+    userId,
+    openId,
+    usageDate,
+    count: 0,
+  };
+}
+
+async function buildEntitlement(req) {
+  const openId = getOpenId(req);
+  const userId = `user_${getUserId(req)}`;
+  const membership = await getActiveMembership(userId, openId);
+  const usage = await getAdvisorUsage(userId, openId);
+  const config = getMembershipConfig();
+  const isMember = Boolean(membership);
+  const advisorDailyLimit = isMember ? config.memberAdvisorDailyLimit : config.freeAdvisorDailyLimit;
+  const advisorUsedToday = Number(usage.count || 0);
+  return {
+    membership,
+    membershipStatus: isMember ? "active" : "free",
+    planTitle: isMember ? "知己月令" : "免费版",
+    isMember,
+    expiresAt: isMember ? membership.expiresAt : "",
+    advisorDailyLimit,
+    advisorUsedToday,
+    advisorRemainingToday: Math.max(0, advisorDailyLimit - advisorUsedToday),
+    canViewAdvancedToday: isMember,
+    canSaveTodayHistory: isMember,
+  };
+}
+
 function asyncRoute(handler) {
   return (req, res) => {
     Promise.resolve(handler(req, res)).catch((error) => {
@@ -154,6 +212,17 @@ app.post("/account/delete-data", asyncRoute(async (req, res) => {
 app.post("/orders", asyncRoute(async (req, res) => {
   const product = req.body.product || {};
   const profile = req.body.profile || {};
+  const existingPaid = product.productType === "deep_report" && profile.profileId
+    ? await findOneByFields("orders", {
+        profileId: profile.profileId,
+        productType: product.productType,
+        status: "paid",
+      })
+    : null;
+  if (existingPaid) {
+    ok(res, existingPaid);
+    return;
+  }
   const order = await upsert("orders", {
     orderId: createId("order"),
     userId: profile.userId || `user_${getUserId(req)}`,
@@ -185,6 +254,10 @@ app.post("/orders/list", asyncRoute(async (req, res) => {
   });
 }));
 
+app.post("/entitlements/status", asyncRoute(async (req, res) => {
+  ok(res, await buildEntitlement(req));
+}));
+
 app.post("/membership/activate", asyncRoute(async (req, res) => {
   const userId = `user_${getUserId(req)}`;
   const openId = getOpenId(req);
@@ -201,6 +274,26 @@ app.post("/membership/activate", asyncRoute(async (req, res) => {
     sourceOrderId: req.body.orderId || "",
   }, "membershipId");
   ok(res, membership);
+}));
+
+app.post("/advisor/usage/consume", asyncRoute(async (req, res) => {
+  const openId = getOpenId(req);
+  const userId = `user_${getUserId(req)}`;
+  const entitlement = await buildEntitlement(req);
+  if (entitlement.advisorRemainingToday <= 0) {
+    res.status(403).send({
+      code: 403,
+      message: "今日 AI 顾问次数已用完",
+      data: entitlement,
+    });
+    return;
+  }
+  const usage = await getAdvisorUsage(userId, openId);
+  await upsert("advisorUsage", {
+    ...usage,
+    count: Number(usage.count || 0) + 1,
+  }, "usageId");
+  ok(res, await buildEntitlement(req));
 }));
 
 app.post("/advisor/ask", asyncRoute(async (req, res) => {
@@ -249,9 +342,33 @@ app.post("/advisor/ask", asyncRoute(async (req, res) => {
 }));
 
 app.post("/ai/deep-report", asyncRoute(async (req, res) => {
+  const profile = req.body && req.body.payload && req.body.payload.profile
+    ? req.body.payload.profile
+    : req.body.profile;
+  const profileId = profile && profile.profileId ? profile.profileId : "";
+  if (profileId) {
+    const existingReport = await findOneByFields("reports", {
+      profileId,
+      reportType: "deep_report",
+    });
+    if (existingReport && existingReport.report) {
+      ok(res, existingReport.report);
+      return;
+    }
+  }
   const report = await callOpenAICompatible("deepReport", req.body, {
     maxTokens: 3200,
   });
+  if (profileId) {
+    await upsert("reports", {
+      reportId: `deep_${profileId}`,
+      userId: profile.userId || `user_${getUserId(req)}`,
+      openId: profile.openId || getOpenId(req),
+      profileId,
+      reportType: "deep_report",
+      report,
+    }, "reportId");
+  }
   ok(res, report);
 }));
 

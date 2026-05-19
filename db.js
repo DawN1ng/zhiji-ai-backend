@@ -108,6 +108,13 @@ const ErrorLog = defineJsonModel("ErrorLog", {
   message: { type: DataTypes.TEXT, allowNull: true },
 });
 
+const AdvisorUsage = defineJsonModel("AdvisorUsage", {
+  usageId: { type: DataTypes.STRING(128), primaryKey: true },
+  userId: { type: DataTypes.STRING(128), allowNull: true },
+  openId: { type: DataTypes.STRING(128), allowNull: true },
+  usageDate: { type: DataTypes.STRING(32), allowNull: true },
+});
+
 const models = {
   User,
   Profile,
@@ -117,6 +124,7 @@ const models = {
   Membership,
   AnalyticsEvent,
   ErrorLog,
+  AdvisorUsage,
 };
 
 async function init() {
