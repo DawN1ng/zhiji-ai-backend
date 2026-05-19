@@ -207,6 +207,7 @@ app.post("/membership/activate", asyncRoute(async (req, res) => {
 app.post("/advisor/ask", asyncRoute(async (req, res) => {
   const { question, profile, scenario } = req.body;
   const fallback = buildAdvisorFallback(question, profile);
+  let aiSource = "remote";
   const answer = await callOpenAICompatible("advisor", {
     question,
     profile,
@@ -214,9 +215,16 @@ app.post("/advisor/ask", asyncRoute(async (req, res) => {
   }, {
     maxTokens: 1200,
   }).catch((error) => {
-    console.error(error);
-    return fallback;
-  }) || fallback;
+    aiSource = "fallback";
+    console.error("[advisor/ask] AI fallback:", error.message);
+    return {
+      ...fallback,
+      debugMessage: error.message,
+    };
+  }) || {
+    ...fallback,
+    debugMessage: "OPENAI_BASE_URL 或 OPENAI_API_KEY 未配置",
+  };
   const chat = upsert("chats", {
     chatId: createId("chat"),
     userId: profile && profile.userId ? profile.userId : `user_${getUserId(req)}`,
@@ -225,10 +233,19 @@ app.post("/advisor/ask", asyncRoute(async (req, res) => {
     question,
     scenario,
     answer,
+    aiSource,
   }, "chatId");
+  console.log("[advisor/ask]", {
+    question,
+    aiSource,
+    model: process.env.OPENAI_MODEL || "gpt-5.4-mini",
+    hasBaseUrl: Boolean(process.env.OPENAI_BASE_URL),
+    hasApiKey: Boolean(process.env.OPENAI_API_KEY),
+  });
   ok(res, {
-    ...chat,
     answer,
+    aiSource,
+    chatId: chat.chatId,
   });
 }));
 
@@ -262,6 +279,15 @@ app.post("/errors/report", asyncRoute(async (req, res) => {
   });
   ok(res, {
     accepted: errors.length,
+  });
+}));
+
+app.get("/debug/ai", asyncRoute(async (req, res) => {
+  ok(res, {
+    hasOpenAIBaseUrl: Boolean(process.env.OPENAI_BASE_URL),
+    hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
+    model: process.env.OPENAI_MODEL || "gpt-5.4-mini",
+    nodeVersion: process.version,
   });
 }));
 
