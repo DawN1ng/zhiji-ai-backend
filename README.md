@@ -116,6 +116,31 @@ curl -X POST -H 'content-type: application/json' -d '{"action": "inc"}' https://
 - MYSQL_USERNAME
 以上三个变量的值请按实际情况填写。如果使用云托管内MySQL，可以在控制台MySQL页面获取相关信息。
 
+## 知己AI 环境变量
+
+上线前请在微信云托管服务设置中配置：
+
+```text
+OPENAI_BASE_URL=大模型代理地址
+OPENAI_API_KEY=大模型代理 Key
+OPENAI_MODEL=gpt-5.4-mini
+MYSQL_ADDRESS=MySQL 连接地址
+MYSQL_USERNAME=MySQL 用户名
+MYSQL_PASSWORD=MySQL 密码
+MYSQL_DATABASE=nodejs_demo
+```
+
+如果使用自建数据库名，可将 `MYSQL_DATABASE` 改为实际数据库名，并确保数据库已创建。
+
+部署后可访问：
+
+```text
+/debug/ai
+/debug/db
+```
+
+用于检查环境变量是否被服务读取。
+
 
 ## License
 

@@ -3,7 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const { init: initDB, Counter } = require("./db");
-const { store, now, createId, upsert, filterByUser } = require("./store");
+const { now, createId, upsert, findById, filterByUser, removeByUser } = require("./store");
 const { callOpenAICompatible, buildAdvisorFallback } = require("./ai");
 
 const logger = morgan("tiny");
@@ -103,7 +103,7 @@ function asyncRoute(handler) {
 app.post("/auth/wechat/login", asyncRoute(async (req, res) => {
   const openId = getOpenId(req) || `local_${req.body.anonymousId || createId("anon")}`;
   const unionId = req.headers["x-wx-unionid"] || "";
-  const user = upsert("users", {
+  const user = await upsert("users", {
     userId: `user_${openId}`,
     openId,
     unionId,
@@ -118,7 +118,7 @@ app.post("/auth/wechat/login", asyncRoute(async (req, res) => {
 app.post("/profiles", asyncRoute(async (req, res) => {
   const openId = getOpenId(req);
   const userId = req.body.userId || `user_${getUserId(req)}`;
-  const profile = upsert("profiles", {
+  const profile = await upsert("profiles", {
     ...req.body,
     userId,
     openId: req.body.openId || openId,
@@ -130,12 +130,13 @@ app.post("/profiles/list", asyncRoute(async (req, res) => {
   const openId = getOpenId(req);
   const userId = `user_${getUserId(req)}`;
   ok(res, {
-    profiles: filterByUser("profiles", userId, openId),
+    profiles: await filterByUser("profiles", userId, openId),
   });
 }));
 
 app.post("/reports/archive", asyncRoute(async (req, res) => {
-  const report = upsert("reports", {
+  const report = await upsert("reports", {
+    reportId: req.body.reportId || createId("report"),
     ...req.body,
     userId: req.body.userId || `user_${getUserId(req)}`,
     openId: req.body.openId || getOpenId(req),
@@ -146,16 +147,14 @@ app.post("/reports/archive", asyncRoute(async (req, res) => {
 app.post("/account/delete-data", asyncRoute(async (req, res) => {
   const openId = getOpenId(req);
   const userId = `user_${getUserId(req)}`;
-  ["profiles", "reports", "chats", "orders", "memberships"].forEach((listName) => {
-    store[listName] = store[listName].filter((item) => item.userId !== userId && item.openId !== openId);
-  });
+  await removeByUser(["profiles", "reports", "chats", "orders", "memberships"], userId, openId);
   ok(res, { deleted: true });
 }));
 
 app.post("/orders", asyncRoute(async (req, res) => {
   const product = req.body.product || {};
   const profile = req.body.profile || {};
-  const order = upsert("orders", {
+  const order = await upsert("orders", {
     orderId: createId("order"),
     userId: profile.userId || `user_${getUserId(req)}`,
     openId: profile.openId || getOpenId(req),
@@ -171,7 +170,7 @@ app.post("/orders", asyncRoute(async (req, res) => {
 }));
 
 app.post("/orders/verify", asyncRoute(async (req, res) => {
-  const order = store.orders.find((item) => item.orderId === req.body.orderId);
+  const order = await findById("orders", req.body.orderId);
   ok(res, order || {
     orderId: req.body.orderId,
     status: "pending",
@@ -182,7 +181,7 @@ app.post("/orders/list", asyncRoute(async (req, res) => {
   const openId = getOpenId(req);
   const userId = `user_${getUserId(req)}`;
   ok(res, {
-    orders: filterByUser("orders", userId, openId),
+    orders: await filterByUser("orders", userId, openId),
   });
 }));
 
@@ -191,7 +190,7 @@ app.post("/membership/activate", asyncRoute(async (req, res) => {
   const openId = getOpenId(req);
   const startedAt = now();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  const membership = upsert("memberships", {
+  const membership = await upsert("memberships", {
     membershipId: createId("membership"),
     userId,
     openId,
@@ -225,7 +224,7 @@ app.post("/advisor/ask", asyncRoute(async (req, res) => {
     ...fallback,
     debugMessage: "OPENAI_BASE_URL 或 OPENAI_API_KEY 未配置",
   };
-  const chat = upsert("chats", {
+  const chat = await upsert("chats", {
     chatId: createId("chat"),
     userId: profile && profile.userId ? profile.userId : `user_${getUserId(req)}`,
     openId: profile && profile.openId ? profile.openId : getOpenId(req),
@@ -258,12 +257,11 @@ app.post("/ai/deep-report", asyncRoute(async (req, res) => {
 
 app.post("/analytics/events", asyncRoute(async (req, res) => {
   const events = Array.isArray(req.body.events) ? req.body.events : [];
-  events.forEach((event) => {
-    store.analyticsEvents.unshift({
+  await Promise.all(events.map((event) => upsert("analyticsEvents", {
+      eventId: event.eventId || createId("event"),
       ...event,
       receivedAt: now(),
-    });
-  });
+    }, "eventId")));
   ok(res, {
     accepted: events.length,
   });
@@ -271,12 +269,11 @@ app.post("/analytics/events", asyncRoute(async (req, res) => {
 
 app.post("/errors/report", asyncRoute(async (req, res) => {
   const errors = Array.isArray(req.body.errors) ? req.body.errors : [];
-  errors.forEach((error) => {
-    store.errorLogs.unshift({
+  await Promise.all(errors.map((error) => upsert("errorLogs", {
+      errorId: error.errorId || createId("error"),
       ...error,
       receivedAt: now(),
-    });
-  });
+    }, "errorId")));
   ok(res, {
     accepted: errors.length,
   });
@@ -288,6 +285,15 @@ app.get("/debug/ai", asyncRoute(async (req, res) => {
     hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
     model: process.env.OPENAI_MODEL || "gpt-5.4-mini",
     nodeVersion: process.version,
+  });
+}));
+
+app.get("/debug/db", asyncRoute(async (req, res) => {
+  ok(res, {
+    hasMysqlAddress: Boolean(process.env.MYSQL_ADDRESS),
+    hasMysqlUsername: Boolean(process.env.MYSQL_USERNAME),
+    hasMysqlPassword: Boolean(process.env.MYSQL_PASSWORD),
+    database: process.env.MYSQL_DATABASE || "nodejs_demo",
   });
 }));
 
