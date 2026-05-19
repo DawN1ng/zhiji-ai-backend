@@ -1,3 +1,5 @@
+const fetch = require("node-fetch");
+
 function getEnv(name, fallback = "") {
   return process.env[name] || fallback;
 }
