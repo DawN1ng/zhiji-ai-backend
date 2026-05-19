@@ -54,6 +54,8 @@ function pickColumns(listName, item) {
       openId: item.openId,
       profileId: item.profileId,
       reportType: item.reportType,
+      inputHash: item.inputHash,
+      schemaVersion: item.schemaVersion,
     };
   }
   if (listName === "chats") {

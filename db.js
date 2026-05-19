@@ -65,6 +65,8 @@ const Report = defineJsonModel("Report", {
   openId: { type: DataTypes.STRING(128), allowNull: true },
   profileId: { type: DataTypes.STRING(128), allowNull: true },
   reportType: { type: DataTypes.STRING(64), allowNull: true },
+  inputHash: { type: DataTypes.STRING(128), allowNull: true },
+  schemaVersion: { type: DataTypes.STRING(128), allowNull: true },
 });
 
 const Chat = defineJsonModel("Chat", {

@@ -25,7 +25,13 @@ function safeJsonParse(text) {
 function buildSystemPrompt(moduleName) {
   const schemaMap = {
     advisor: '只返回 JSON：{"structure":"...","conflict":"...","advantage":"...","pitfall":"...","actions":["...","...","..."]}',
-    deepReport: '只返回 JSON：{"title":"...","subtitle":"...","summary":"...","readingFocus":["..."],"sections":[{"key":"personality","title":"...","body":"...","points":["..."],"practice":"..."}],"quote":"..."}'
+    deepReport: [
+      '只返回 JSON，不要 Markdown，不要解释。',
+      'JSON 结构：{"title":"...","subtitle":"...","summary":"...","readingFocus":["..."],"sections":[{"key":"personality","title":"...","body":"...","points":["..."],"practice":"..."}],"quote":"..."}',
+      '整份报告正文目标 3000-4500 字，不要写成摘要。',
+      'summary 约 260-360 字；每个 section.body 约 320-520 字；每章 points 4-6 条，每条 24-56 字；practice 约 80-140 字。',
+      '每个章节都要具体展开：先解释五行结构如何影响该主题，再写优势、风险、适合的场景和可执行建议。'
+    ].join("\n")
   };
   return [
     "你是「知己AI」的东方五行人格顾问。",
@@ -37,6 +43,31 @@ function buildSystemPrompt(moduleName) {
 }
 
 function buildUserPrompt(moduleName, payload) {
+  if (moduleName === "deepReport") {
+    const input = payload && payload.payload ? payload.payload : payload;
+    const profile = input && input.profile ? input.profile : {};
+    return [
+      `用户昵称：${profile.nickname || "用户"}`,
+      `关注问题：${profile.concern || "自我认知"}`,
+      `人格类型：${profile.personalityType || ""} · ${profile.personalityName || ""}`,
+      `主元素：${profile.mainElement || ""}`,
+      `辅元素：${profile.secondaryElement || ""}`,
+      `关键词：${(profile.keywords || []).join(" / ")}`,
+      `五行分数：${JSON.stringify(profile.wuxingScores || {})}`,
+      `promptVersion：${payload.promptVersion || ""}`,
+      `schemaVersion：${payload.schemaVersion || ""}`,
+      "",
+      "请生成一份完整深度报告，要求：",
+      "1. 每章都要围绕用户的五行结构展开，不要写成通用性格文案，也不要只给短段落。",
+      "2. 事业、财富、关系、情绪建议必须保持“倾向与观察”口吻，避免绝对化承诺。",
+      "3. 财富部分只能讨论能力、价值交换、节奏和风险意识，不提供任何投资建议。",
+      "4. 情感部分只能讨论沟通模式和关系观察，不预测婚姻结果。",
+      "5. 情绪部分只能给自我觉察和日常调节建议，不做医疗判断。",
+      "6. 未来 90 天节律请分成前 30 天、中 30 天、后 30 天三个阶段。",
+      "7. 专属行动建议要可执行，适合放进小程序报告页直接展示。",
+      "8. 输出体量请接近付费报告：总览充分、七个章节完整，每章不要少于 320 个中文字符。"
+    ].join("\n");
+  }
   return JSON.stringify({
     task: moduleName,
     input: payload

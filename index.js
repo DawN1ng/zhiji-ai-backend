@@ -346,9 +346,12 @@ app.post("/ai/deep-report", asyncRoute(async (req, res) => {
     ? req.body.payload.profile
     : req.body.profile;
   const profileId = profile && profile.profileId ? profile.profileId : "";
-  if (profileId) {
+  const inputHash = req.body && req.body.inputHash ? req.body.inputHash : "";
+  const schemaVersion = req.body && req.body.schemaVersion ? req.body.schemaVersion : "deep_report_v3_longform";
+  const reportId = inputHash ? `deep_${inputHash}` : `deep_${profileId}_${schemaVersion}`;
+  if (profileId || inputHash) {
     const existingReport = await findOneByFields("reports", {
-      profileId,
+      reportId,
       reportType: "deep_report",
     });
     if (existingReport && existingReport.report) {
@@ -357,15 +360,17 @@ app.post("/ai/deep-report", asyncRoute(async (req, res) => {
     }
   }
   const report = await callOpenAICompatible("deepReport", req.body, {
-    maxTokens: 3200,
+    maxTokens: 7200,
   });
   if (profileId) {
     await upsert("reports", {
-      reportId: `deep_${profileId}`,
+      reportId,
       userId: profile.userId || `user_${getUserId(req)}`,
       openId: profile.openId || getOpenId(req),
       profileId,
       reportType: "deep_report",
+      inputHash,
+      schemaVersion,
       report,
     }, "reportId");
   }
