@@ -5,9 +5,19 @@ function getEnv(name, fallback = "") {
 }
 
 function safeJsonParse(text) {
+  const content = typeof text === "string" ? text.trim() : "";
+  const start = content.indexOf("{");
+  const end = content.lastIndexOf("}");
   try {
-    return JSON.parse(text);
+    return JSON.parse(content);
   } catch (error) {
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(content.slice(start, end + 1));
+      } catch (innerError) {
+        return { rawText: text };
+      }
+    }
     return { rawText: text };
   }
 }
