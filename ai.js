@@ -113,6 +113,18 @@ async function callOpenAICompatible(moduleName, payload, options = {}) {
   return content ? safeJsonParse(content) : data;
 }
 
+function getAIConfigStatus() {
+  const baseUrl = getEnv("OPENAI_BASE_URL");
+  const apiKey = getEnv("OPENAI_API_KEY");
+  return {
+    hasOpenAIBaseUrl: Boolean(baseUrl),
+    openAIBaseUrl: baseUrl ? baseUrl.replace(/\/$/, "") : "",
+    hasOpenAIKey: Boolean(apiKey),
+    openAIKeyLength: apiKey.length,
+    model: getEnv("OPENAI_MODEL", "gpt-5.4-mini"),
+  };
+}
+
 function buildAdvisorFallback(question, profile) {
   const type = profile ? `${profile.personalityType || ""} · ${profile.personalityName || ""}` : "五行人格";
   return {
@@ -126,5 +138,6 @@ function buildAdvisorFallback(question, profile) {
 
 module.exports = {
   callOpenAICompatible,
+  getAIConfigStatus,
   buildAdvisorFallback
 };

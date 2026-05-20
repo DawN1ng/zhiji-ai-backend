@@ -4,7 +4,7 @@ const cors = require("cors");
 const morgan = require("morgan");
 const { init: initDB, Counter } = require("./db");
 const { now, createId, upsert, findById, findOneByFields, filterByUser, removeByUser } = require("./store");
-const { callOpenAICompatible, buildAdvisorFallback } = require("./ai");
+const { callOpenAICompatible, getAIConfigStatus, buildAdvisorFallback } = require("./ai");
 const {
   createJsapiPayment,
   queryOrder,
@@ -375,6 +375,9 @@ app.post("/advisor/ask", asyncRoute(async (req, res) => {
     ...fallback,
     debugMessage: "OPENAI_BASE_URL 或 OPENAI_API_KEY 未配置",
   };
+  if (answer && answer.debugMessage === "OPENAI_BASE_URL 或 OPENAI_API_KEY 未配置") {
+    aiSource = "fallback";
+  }
   const chat = await upsert("chats", {
     chatId: createId("chat"),
     userId: profile && profile.userId ? profile.userId : `user_${getUserId(req)}`,
@@ -461,9 +464,7 @@ app.post("/errors/report", asyncRoute(async (req, res) => {
 
 app.get("/debug/ai", asyncRoute(async (req, res) => {
   ok(res, {
-    hasOpenAIBaseUrl: Boolean(process.env.OPENAI_BASE_URL),
-    hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
-    model: process.env.OPENAI_MODEL || "gpt-5.4-mini",
+    ...getAIConfigStatus(),
     nodeVersion: process.version,
   });
 }));

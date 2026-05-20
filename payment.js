@@ -23,7 +23,18 @@ function getPaymentConfig() {
 }
 
 function normalizePem(value) {
-  return value ? value.replace(/\\n/g, "\n") : "";
+  if (!value) return "";
+  let pem = String(value).trim();
+  if (
+    (pem.startsWith('"') && pem.endsWith('"'))
+    || (pem.startsWith("'") && pem.endsWith("'"))
+  ) {
+    pem = pem.slice(1, -1).trim();
+  }
+  pem = pem.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  pem = pem.replace(/-----BEGIN ([^-]+)-----\s*/g, "-----BEGIN $1-----\n");
+  pem = pem.replace(/\s*-----END ([^-]+)-----/g, "\n-----END $1-----");
+  return pem.trim();
 }
 
 function normalizePrivateKey(value) {
@@ -59,11 +70,17 @@ function randomNonce(length = 32) {
 }
 
 function signWithPrivateKey(message, privateKey) {
-  return crypto
-    .createSign("RSA-SHA256")
-    .update(message)
-    .end()
-    .sign(privateKey, "base64");
+  try {
+    return crypto
+      .createSign("RSA-SHA256")
+      .update(message)
+      .end()
+      .sign(privateKey, "base64");
+  } catch (error) {
+    const nextError = new Error(`微信支付商户私钥格式无效：${error.message}`);
+    nextError.code = "WECHAT_PAY_PRIVATE_KEY_INVALID";
+    throw nextError;
+  }
 }
 
 function buildAuthorization(method, urlPath, body = "", config = getPaymentConfig()) {
@@ -229,10 +246,15 @@ function selectNotifyVerifierKey(config, serial) {
 
 function getPaymentConfigStatus() {
   const config = getPaymentConfig();
-  return Object.keys(config).reduce((memo, key) => {
+  const status = Object.keys(config).reduce((memo, key) => {
     memo[key] = Boolean(config[key]);
     return memo;
   }, {});
+  return {
+    ...status,
+    privateKeyLooksPem: /^-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+-----END [A-Z ]*PRIVATE KEY-----$/.test(config.privateKey),
+    publicKeyLooksPem: !config.publicKey || /^-----BEGIN PUBLIC KEY-----[\s\S]+-----END PUBLIC KEY-----$/.test(config.publicKey),
+  };
 }
 
 module.exports = {
