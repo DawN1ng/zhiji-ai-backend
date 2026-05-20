@@ -453,7 +453,22 @@ app.post("/ai/deep-report", asyncRoute(async (req, res) => {
       schemaVersion,
       report,
       aiSource,
-    }, "reportId");
+    }, "reportId").catch((error) => {
+      console.error("[ai/deep-report] save report failed:", {
+        message: error.message,
+        name: error.name,
+        errors: Array.isArray(error.errors)
+          ? error.errors.map((item) => ({
+              message: item.message,
+              path: item.path,
+              value: item.value,
+            }))
+          : [],
+        reportId,
+        profileId,
+        inputHash,
+      });
+    });
   }
   ok(res, report);
 }));
@@ -501,6 +516,24 @@ app.get("/debug/db", asyncRoute(async (req, res) => {
 app.get("/debug/payment", asyncRoute(async (req, res) => {
   ok(res, {
     wechatPay: getPaymentConfigStatus(),
+  });
+}));
+
+app.get("/debug/report-store", asyncRoute(async (req, res) => {
+  const reportId = createId("debug_report");
+  const saved = await upsert("reports", {
+    reportId,
+    userId: `user_${getUserId(req)}`,
+    openId: getOpenId(req),
+    profileId: "debug_profile",
+    reportType: "debug",
+    inputHash: "debug_input_hash",
+    schemaVersion: "debug_schema",
+    report: { ok: true, createdAt: now() },
+  }, "reportId");
+  ok(res, {
+    saved: Boolean(saved),
+    reportId,
   });
 }));
 

@@ -60,13 +60,13 @@ const Profile = defineJsonModel("Profile", {
 });
 
 const Report = defineJsonModel("Report", {
-  reportId: { type: DataTypes.STRING(128), primaryKey: true },
+  reportId: { type: DataTypes.STRING(255), primaryKey: true },
   userId: { type: DataTypes.STRING(128), allowNull: true },
   openId: { type: DataTypes.STRING(128), allowNull: true },
   profileId: { type: DataTypes.STRING(128), allowNull: true },
   reportType: { type: DataTypes.STRING(64), allowNull: true },
-  inputHash: { type: DataTypes.STRING(128), allowNull: true },
-  schemaVersion: { type: DataTypes.STRING(128), allowNull: true },
+  inputHash: { type: DataTypes.STRING(255), allowNull: true },
+  schemaVersion: { type: DataTypes.STRING(255), allowNull: true },
 });
 
 const Chat = defineJsonModel("Chat", {
