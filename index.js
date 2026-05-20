@@ -5,12 +5,24 @@ const morgan = require("morgan");
 const { init: initDB, Counter } = require("./db");
 const { now, createId, upsert, findById, findOneByFields, filterByUser, removeByUser } = require("./store");
 const { callOpenAICompatible, buildAdvisorFallback } = require("./ai");
+const {
+  createJsapiPayment,
+  queryOrder,
+  mapTradeStateToOrderStatus,
+  decryptResource,
+  verifyNotifySignature,
+  getPaymentConfigStatus,
+} = require("./payment");
 
 const logger = morgan("tiny");
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
-app.use(express.json());
+app.use(express.json({
+  verify(req, res, buf) {
+    req.rawBody = buf.toString("utf8");
+  },
+}));
 app.use(cors());
 app.use(logger);
 
@@ -235,15 +247,61 @@ app.post("/orders", asyncRoute(async (req, res) => {
     status: "pending",
     paymentParams: null,
   }, "orderId");
-  ok(res, order);
+  const paymentParams = await createJsapiPayment(order, req);
+  const payableOrder = await upsert("orders", {
+    ...order,
+    paymentParams,
+  }, "orderId");
+  ok(res, payableOrder);
+}));
+
+app.post("/orders/notify", asyncRoute(async (req, res) => {
+  verifyNotifySignature(req.headers, req.rawBody);
+  const resource = req.body && req.body.resource;
+  if (!resource) {
+    res.status(400).send({ code: "FAIL", message: "缺少支付通知资源" });
+    return;
+  }
+  const transaction = decryptResource(resource);
+  const orderId = transaction.out_trade_no;
+  const existingOrder = await findById("orders", orderId);
+  if (existingOrder) {
+    await upsert("orders", {
+      ...existingOrder,
+      status: mapTradeStateToOrderStatus(transaction.trade_state),
+      transactionId: transaction.transaction_id || "",
+      paidAt: transaction.success_time || existingOrder.paidAt || "",
+      paymentNotify: transaction,
+    }, "orderId");
+  }
+  res.send({ code: "SUCCESS", message: "成功" });
 }));
 
 app.post("/orders/verify", asyncRoute(async (req, res) => {
   const order = await findById("orders", req.body.orderId);
-  ok(res, order || {
-    orderId: req.body.orderId,
-    status: "pending",
+  if (!order) {
+    ok(res, {
+      orderId: req.body.orderId,
+      status: "pending",
+    });
+    return;
+  }
+  const transaction = await queryOrder(order.orderId).catch((error) => {
+    console.error("[orders/verify] query failed:", error.message);
+    return null;
   });
+  if (!transaction) {
+    ok(res, order);
+    return;
+  }
+  const verifiedOrder = await upsert("orders", {
+    ...order,
+    status: mapTradeStateToOrderStatus(transaction.trade_state),
+    transactionId: transaction.transaction_id || order.transactionId || "",
+    paidAt: transaction.success_time || order.paidAt || "",
+    paymentQuery: transaction,
+  }, "orderId");
+  ok(res, verifiedOrder);
 }));
 
 app.post("/orders/list", asyncRoute(async (req, res) => {
@@ -416,6 +474,12 @@ app.get("/debug/db", asyncRoute(async (req, res) => {
     hasMysqlUsername: Boolean(process.env.MYSQL_USERNAME),
     hasMysqlPassword: Boolean(process.env.MYSQL_PASSWORD),
     database: process.env.MYSQL_DATABASE || "nodejs_demo",
+  });
+}));
+
+app.get("/debug/payment", asyncRoute(async (req, res) => {
+  ok(res, {
+    wechatPay: getPaymentConfigStatus(),
   });
 }));
 

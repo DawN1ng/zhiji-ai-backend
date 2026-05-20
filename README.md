@@ -124,6 +124,14 @@ curl -X POST -H 'content-type: application/json' -d '{"action": "inc"}' https://
 OPENAI_BASE_URL=大模型代理地址
 OPENAI_API_KEY=大模型代理 Key
 OPENAI_MODEL=gpt-5.4-mini
+WECHAT_APPID=小程序 AppID
+WECHAT_PAY_MCH_ID=微信支付商户号
+WECHAT_PAY_SERIAL_NO=商户 API 证书序列号
+WECHAT_PAY_PRIVATE_KEY=商户 API 私钥，换行可写成 \n
+WECHAT_PAY_API_V3_KEY=微信支付 API v3 密钥
+WECHAT_PAY_NOTIFY_URL=https://你的后端域名/orders/notify
+WECHAT_PAY_PLATFORM_CERTIFICATE=微信支付平台证书内容，换行可写成 \n
+WECHAT_PAY_PLATFORM_SERIAL_NO=微信支付平台证书序列号，可选但建议配置
 MYSQL_ADDRESS=MySQL 连接地址
 MYSQL_USERNAME=MySQL 用户名
 MYSQL_PASSWORD=MySQL 密码
@@ -137,9 +145,18 @@ MYSQL_DATABASE=nodejs_demo
 ```text
 /debug/ai
 /debug/db
+/debug/payment
 ```
 
 用于检查环境变量是否被服务读取。
+
+## 支付接口
+
+- `POST /orders`：创建深度报告订单，并通过微信支付 JSAPI 下单，返回小程序 `wx.requestPayment` 所需参数。
+- `POST /orders/verify`：按商户订单号向微信支付查单，并同步本地订单状态。
+- `POST /orders/notify`：微信支付回调地址，解密支付通知并更新本地订单。
+
+未配置完整微信支付环境变量时，下单会返回明确错误，不会生成可误用的假支付参数。
 
 
 ## License
