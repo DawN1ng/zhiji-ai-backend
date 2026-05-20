@@ -15,13 +15,19 @@ function getPaymentConfig() {
     privateKey: normalizePrivateKey(getEnv("WECHAT_PAY_PRIVATE_KEY")),
     apiV3Key: getEnv("WECHAT_PAY_API_V3_KEY"),
     notifyUrl: getEnv("WECHAT_PAY_NOTIFY_URL"),
+    publicKey: normalizePem(getEnv("WECHAT_PAY_PUBLIC_KEY")),
+    publicKeyId: getEnv("WECHAT_PAY_PUBLIC_KEY_ID"),
     platformCertificate: normalizePrivateKey(getEnv("WECHAT_PAY_PLATFORM_CERTIFICATE")),
     platformSerialNo: getEnv("WECHAT_PAY_PLATFORM_SERIAL_NO"),
   };
 }
 
-function normalizePrivateKey(value) {
+function normalizePem(value) {
   return value ? value.replace(/\\n/g, "\n") : "";
+}
+
+function normalizePrivateKey(value) {
+  return normalizePem(value);
 }
 
 function assertConfig(keys, config = getPaymentConfig()) {
@@ -39,7 +45,13 @@ function assertPaymentConfig(config = getPaymentConfig()) {
 }
 
 function assertNotifyConfig(config = getPaymentConfig()) {
-  assertConfig(["apiV3Key", "platformCertificate"], config);
+  assertConfig(["apiV3Key"], config);
+  if (!config.publicKey && !config.platformCertificate) {
+    const error = new Error("微信支付未完成生产配置：WECHAT_PAY_PUBLIC_KEY 或 WECHAT_PAY_PLATFORM_CERTIFICATE");
+    error.code = "WECHAT_PAY_CONFIG_MISSING";
+    error.missing = ["WECHAT_PAY_PUBLIC_KEY"];
+    throw error;
+  }
 }
 
 function randomNonce(length = 32) {
@@ -185,18 +197,34 @@ function verifyNotifySignature(headers, rawBody) {
   if (!timestamp || !nonce || !signature || !serial) {
     throw new Error("微信支付通知缺少签名头");
   }
-  if (config.platformSerialNo && config.platformSerialNo !== serial) {
-    throw new Error("微信支付平台证书序列号不匹配");
+  const verifierKey = selectNotifyVerifierKey(config, serial);
+  if (!verifierKey) {
+    throw new Error("微信支付通知签名公钥或平台证书不匹配");
   }
   const message = `${timestamp}\n${nonce}\n${rawBody || ""}\n`;
   const verified = crypto
     .createVerify("RSA-SHA256")
     .update(message)
     .end()
-    .verify(config.platformCertificate, signature, "base64");
+    .verify(verifierKey, signature, "base64");
   if (!verified) {
     throw new Error("微信支付通知签名校验失败");
   }
+}
+
+function selectNotifyVerifierKey(config, serial) {
+  if (config.publicKey) {
+    if (!config.publicKeyId || config.publicKeyId === serial) {
+      return config.publicKey;
+    }
+    return "";
+  }
+  if (config.platformCertificate) {
+    if (!config.platformSerialNo || config.platformSerialNo === serial) {
+      return config.platformCertificate;
+    }
+  }
+  return "";
 }
 
 function getPaymentConfigStatus() {

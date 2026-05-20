@@ -130,8 +130,8 @@ WECHAT_PAY_SERIAL_NO=商户 API 证书序列号
 WECHAT_PAY_PRIVATE_KEY=商户 API 私钥，换行可写成 \n
 WECHAT_PAY_API_V3_KEY=微信支付 API v3 密钥
 WECHAT_PAY_NOTIFY_URL=https://你的后端域名/orders/notify
-WECHAT_PAY_PLATFORM_CERTIFICATE=微信支付平台证书内容，换行可写成 \n
-WECHAT_PAY_PLATFORM_SERIAL_NO=微信支付平台证书序列号，可选但建议配置
+WECHAT_PAY_PUBLIC_KEY=微信支付公钥内容，换行可写成 \n
+WECHAT_PAY_PUBLIC_KEY_ID=微信支付公钥 ID，通常形如 PUB_KEY_ID_...
 MYSQL_ADDRESS=MySQL 连接地址
 MYSQL_USERNAME=MySQL 用户名
 MYSQL_PASSWORD=MySQL 密码
@@ -157,6 +157,13 @@ MYSQL_DATABASE=nodejs_demo
 - `POST /orders/notify`：微信支付回调地址，解密支付通知并更新本地订单。
 
 未配置完整微信支付环境变量时，下单会返回明确错误，不会生成可误用的假支付参数。
+
+支付回调验签优先使用微信支付公钥。如果仍使用旧平台证书模式，也兼容以下变量：
+
+```text
+WECHAT_PAY_PLATFORM_CERTIFICATE=微信支付平台证书内容，换行可写成 \n
+WECHAT_PAY_PLATFORM_SERIAL_NO=微信支付平台证书序列号
+```
 
 
 ## License
