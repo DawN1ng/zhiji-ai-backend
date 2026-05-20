@@ -132,6 +132,7 @@ WECHAT_PAY_API_V3_KEY=微信支付 API v3 密钥
 WECHAT_PAY_NOTIFY_URL=https://你的后端域名/orders/notify
 WECHAT_PAY_PUBLIC_KEY=微信支付公钥内容，换行可写成 \n
 WECHAT_PAY_PUBLIC_KEY_ID=微信支付公钥 ID，通常形如 PUB_KEY_ID_...
+DEBUG_TOKEN=调试接口访问令牌；生产可不配置以关闭调试接口
 MYSQL_ADDRESS=MySQL 连接地址
 MYSQL_USERNAME=MySQL 用户名
 MYSQL_PASSWORD=MySQL 密码
@@ -140,15 +141,15 @@ MYSQL_DATABASE=nodejs_demo
 
 如果使用自建数据库名，可将 `MYSQL_DATABASE` 改为实际数据库名，并确保数据库已创建。
 
-部署后可访问：
+配置 `DEBUG_TOKEN` 后可访问：
 
 ```text
-/debug/ai
-/debug/db
-/debug/payment
+/debug/ai?debug_token=你的DEBUG_TOKEN
+/debug/db?debug_token=你的DEBUG_TOKEN
+/debug/payment?debug_token=你的DEBUG_TOKEN
 ```
 
-用于检查环境变量是否被服务读取。
+用于检查环境变量是否被服务读取。未配置 `DEBUG_TOKEN` 时，调试接口默认返回 404。
 
 ## 支付接口
 

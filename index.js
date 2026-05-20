@@ -2,7 +2,7 @@ const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
-const { init: initDB, Counter } = require("./db");
+const { init: initDB, Counter, dbStatus } = require("./db");
 const { now, createId, upsert, findById, findOneByFields, filterByUser, removeByUser } = require("./store");
 const { callOpenAICompatible, buildLocalDeepReport, getAIConfigStatus, buildAdvisorFallback } = require("./ai");
 const {
@@ -175,6 +175,21 @@ function asyncRoute(handler) {
   };
 }
 
+function debugRoute(handler) {
+  return asyncRoute(async (req, res) => {
+    const token = process.env.DEBUG_TOKEN || "";
+    const requestToken = req.headers["x-debug-token"] || req.query.debug_token || "";
+    if (!token || requestToken !== token) {
+      res.status(404).send({
+        code: 404,
+        message: "not found",
+      });
+      return;
+    }
+    await handler(req, res);
+  });
+}
+
 app.post("/auth/wechat/login", asyncRoute(async (req, res) => {
   const openId = getOpenId(req) || `local_${req.body.anonymousId || createId("anon")}`;
   const unionId = req.headers["x-wx-unionid"] || "";
@@ -270,6 +285,12 @@ app.post("/orders/notify", asyncRoute(async (req, res) => {
   const transaction = decryptResource(resource);
   const orderId = transaction.out_trade_no;
   const existingOrder = await findById("orders", orderId);
+  console.log("[orders/notify]", {
+    orderId,
+    tradeState: transaction.trade_state,
+    transactionId: transaction.transaction_id || "",
+    hasExistingOrder: Boolean(existingOrder),
+  });
   if (existingOrder) {
     await upsert("orders", {
       ...existingOrder,
@@ -488,6 +509,12 @@ app.post("/analytics/events", asyncRoute(async (req, res) => {
       ...event,
       receivedAt: now(),
     }, "eventId")));
+  if (events.length) {
+    console.log("[analytics/events]", {
+      accepted: events.length,
+      firstEventName: events[0] && events[0].eventName,
+    });
+  }
   ok(res, {
     accepted: events.length,
   });
@@ -500,34 +527,42 @@ app.post("/errors/report", asyncRoute(async (req, res) => {
       ...error,
       receivedAt: now(),
     }, "errorId")));
+  if (errors.length) {
+    console.error("[errors/report]", {
+      accepted: errors.length,
+      firstMessage: errors[0] && errors[0].message,
+      firstContext: errors[0] && errors[0].context,
+    });
+  }
   ok(res, {
     accepted: errors.length,
   });
 }));
 
-app.get("/debug/ai", asyncRoute(async (req, res) => {
+app.get("/debug/ai", debugRoute(async (req, res) => {
   ok(res, {
     ...getAIConfigStatus(),
     nodeVersion: process.version,
   });
 }));
 
-app.get("/debug/db", asyncRoute(async (req, res) => {
+app.get("/debug/db", debugRoute(async (req, res) => {
   ok(res, {
     hasMysqlAddress: Boolean(process.env.MYSQL_ADDRESS),
     hasMysqlUsername: Boolean(process.env.MYSQL_USERNAME),
     hasMysqlPassword: Boolean(process.env.MYSQL_PASSWORD),
     database: process.env.MYSQL_DATABASE || "nodejs_demo",
+    status: dbStatus,
   });
 }));
 
-app.get("/debug/payment", asyncRoute(async (req, res) => {
+app.get("/debug/payment", debugRoute(async (req, res) => {
   ok(res, {
     wechatPay: getPaymentConfigStatus(),
   });
 }));
 
-app.get("/debug/report-store", asyncRoute(async (req, res) => {
+app.get("/debug/report-store", debugRoute(async (req, res) => {
   const reportId = createId("debug_report");
   const saved = await upsert("reports", {
     reportId,
@@ -545,7 +580,7 @@ app.get("/debug/report-store", asyncRoute(async (req, res) => {
   });
 }));
 
-app.get("/debug/openid", asyncRoute(async (req, res) => {
+app.get("/debug/openid", debugRoute(async (req, res) => {
   ok(res, {
     hasOpenId: Boolean(getOpenId(req)),
     openIdPrefix: getOpenId(req) ? getOpenId(req).slice(0, 8) : "",

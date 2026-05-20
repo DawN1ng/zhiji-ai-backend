@@ -9,6 +9,13 @@ const {
 
 const [host, port] = MYSQL_ADDRESS.split(":");
 const hasMysqlConfig = Boolean(MYSQL_USERNAME && MYSQL_PASSWORD && host);
+const dbStatus = {
+  hasMysqlConfig,
+  isReady: false,
+  database: MYSQL_DATABASE,
+  lastError: "",
+  syncedModels: [],
+};
 
 const sequelize = hasMysqlConfig
   ? new Sequelize(MYSQL_DATABASE, MYSQL_USERNAME, MYSQL_PASSWORD, {
@@ -132,12 +139,25 @@ const models = {
 async function init() {
   if (!sequelize) {
     console.log("未配置 MySQL，使用内存存储");
+    dbStatus.isReady = false;
+    dbStatus.lastError = "MYSQL env not configured";
     return;
   }
-  await sequelize.authenticate();
-  await Counter.sync({ alter: true });
-  await Promise.all(Object.values(models).filter(Boolean).map((model) => model.sync({ alter: true })));
-  console.log(`MySQL 初始化完成：${MYSQL_DATABASE}`);
+  try {
+    await sequelize.authenticate();
+    await Counter.sync({ alter: true });
+    const modelList = Object.values(models).filter(Boolean);
+    await Promise.all(modelList.map((model) => model.sync({ alter: true })));
+    dbStatus.isReady = true;
+    dbStatus.lastError = "";
+    dbStatus.syncedModels = modelList.map((model) => model.name);
+    console.log(`MySQL 初始化完成：${MYSQL_DATABASE}`);
+  } catch (error) {
+    dbStatus.isReady = false;
+    dbStatus.lastError = error.message || String(error);
+    console.error("[db/init] MySQL 初始化失败:", error);
+    throw error;
+  }
 }
 
 module.exports = {
@@ -145,4 +165,5 @@ module.exports = {
   init,
   Counter,
   models,
+  dbStatus,
 };
