@@ -131,8 +131,8 @@ async function wechatPayRequest(method, urlPath, payload = null) {
 async function createJsapiPayment(order, req) {
   const config = getPaymentConfig();
   assertPaymentConfig(config);
-  if (!order.openId) {
-    throw new Error("微信支付需要用户 OpenID");
+  if (!order.openId || /^local_/.test(order.openId)) {
+    throw new Error("微信支付需要当前小程序用户的真实 OpenID，请使用云托管调用并确认 AppID 与商户号已关联");
   }
 
   const payload = {

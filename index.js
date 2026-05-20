@@ -4,7 +4,7 @@ const cors = require("cors");
 const morgan = require("morgan");
 const { init: initDB, Counter } = require("./db");
 const { now, createId, upsert, findById, findOneByFields, filterByUser, removeByUser } = require("./store");
-const { callOpenAICompatible, getAIConfigStatus, buildAdvisorFallback } = require("./ai");
+const { callOpenAICompatible, buildLocalDeepReport, getAIConfigStatus, buildAdvisorFallback } = require("./ai");
 const {
   createJsapiPayment,
   queryOrder,
@@ -87,7 +87,12 @@ function ok(res, data = {}) {
 }
 
 function getOpenId(req) {
-  return req.headers["x-wx-openid"] || req.headers["x-wx-from-openid"] || "";
+  return req.headers["x-wx-openid"]
+    || req.headers["x-wx-from-openid"]
+    || req.headers["x-wx-open-id"]
+    || req.headers["x-wx-from-open-id"]
+    || req.headers["x-zhiji-openid"]
+    || "";
 }
 
 function getSessionId(req) {
@@ -420,9 +425,23 @@ app.post("/ai/deep-report", asyncRoute(async (req, res) => {
       return;
     }
   }
+  let aiSource = "remote";
   const report = await callOpenAICompatible("deepReport", req.body, {
-    maxTokens: 7200,
-  });
+    model: req.body.model,
+    temperature: req.body.temperature,
+    maxTokens: Math.min(Number(req.body.maxTokens || 3600), 4200),
+    useJsonResponseFormat: req.body.useJsonResponseFormat !== false,
+  }).catch((error) => {
+    aiSource = "fallback";
+    console.error("[ai/deep-report] AI fallback:", error.message);
+    return {
+      ...buildLocalDeepReport(req.body),
+      aiDebugMessage: error.message,
+    };
+  }) || {
+    ...buildLocalDeepReport(req.body),
+    aiDebugMessage: "OPENAI_BASE_URL 或 OPENAI_API_KEY 未配置",
+  };
   if (profileId) {
     await upsert("reports", {
       reportId,
@@ -433,6 +452,7 @@ app.post("/ai/deep-report", asyncRoute(async (req, res) => {
       inputHash,
       schemaVersion,
       report,
+      aiSource,
     }, "reportId");
   }
   ok(res, report);
@@ -481,6 +501,16 @@ app.get("/debug/db", asyncRoute(async (req, res) => {
 app.get("/debug/payment", asyncRoute(async (req, res) => {
   ok(res, {
     wechatPay: getPaymentConfigStatus(),
+  });
+}));
+
+app.get("/debug/openid", asyncRoute(async (req, res) => {
+  ok(res, {
+    hasOpenId: Boolean(getOpenId(req)),
+    openIdPrefix: getOpenId(req) ? getOpenId(req).slice(0, 8) : "",
+    source: req.headers["x-wx-source"] || "",
+    hasWxOpenIdHeader: Boolean(req.headers["x-wx-openid"]),
+    hasZhijiOpenIdHeader: Boolean(req.headers["x-zhiji-openid"]),
   });
 }));
 
