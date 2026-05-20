@@ -324,6 +324,14 @@ app.post("/entitlements/status", asyncRoute(async (req, res) => {
 app.post("/membership/activate", asyncRoute(async (req, res) => {
   const userId = `user_${getUserId(req)}`;
   const openId = getOpenId(req);
+  const order = req.body.orderId ? await findById("orders", req.body.orderId) : null;
+  if (!order || order.status !== "paid" || order.productType !== "membership_monthly") {
+    res.status(400).send({
+      code: 400,
+      message: "会员订单未完成支付",
+    });
+    return;
+  }
   const startedAt = now();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   const membership = await upsert("memberships", {
@@ -334,7 +342,7 @@ app.post("/membership/activate", asyncRoute(async (req, res) => {
     status: "active",
     startedAt,
     expiresAt,
-    sourceOrderId: req.body.orderId || "",
+    sourceOrderId: order.orderId,
   }, "membershipId");
   ok(res, membership);
 }));
