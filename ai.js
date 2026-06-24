@@ -25,9 +25,16 @@ function safeJsonParse(text) {
 function buildLocalDeepReport(payload) {
   const input = payload && payload.payload ? payload.payload : payload;
   const profile = input && input.profile ? input.profile : {};
+  const elementNameMap = {
+    wood: '木',
+    fire: '火',
+    earth: '土',
+    metal: '金',
+    water: '水'
+  };
+  const mainElement = elementNameMap[profile.mainElement] || profile.mainElement || '水';
+  const secondaryElement = elementNameMap[profile.secondaryElement] || profile.secondaryElement || '火';
   const type = `${profile.personalityType || "五行人格"} · ${profile.personalityName || "自我观察者"}`;
-  const mainElement = profile.mainElement || "water";
-  const secondaryElement = profile.secondaryElement || "fire";
   const concern = profile.concern || "自我认知";
   return {
     title: `${type}完整报告`,

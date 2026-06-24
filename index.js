@@ -353,6 +353,15 @@ app.post("/membership/activate", asyncRoute(async (req, res) => {
     });
     return;
   }
+  const memberships = await filterByUser("memberships", userId, openId);
+  const usedMembership = memberships.find((item) => item.sourceOrderId === order.orderId);
+  if (usedMembership) {
+    res.status(409).send({
+      code: 409,
+      message: "该会员订单已使用，请重新支付开通",
+    });
+    return;
+  }
   const startedAt = now();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   const membership = await upsert("memberships", {
