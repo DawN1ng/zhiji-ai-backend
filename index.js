@@ -47,6 +47,17 @@ function logError(message, error, detail = {}) {
   });
 }
 
+const MEMBERSHIP_PLAN_MAP = {
+  membership_monthly: { planType: "one_month", durationDays: 30 },
+  membership_one_month: { planType: "one_month", durationDays: 30 },
+  membership_three_months: { planType: "three_months", durationDays: 90 },
+  membership_six_months: { planType: "six_months", durationDays: 180 },
+};
+
+function getMembershipPlan(productType) {
+  return MEMBERSHIP_PLAN_MAP[productType] || null;
+}
+
 // 首页
 app.get("/", async (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
@@ -140,11 +151,13 @@ function getMembershipConfig() {
 async function getActiveMembership(userId, openId) {
   const memberships = await filterByUser("memberships", userId, openId);
   const nowTime = Date.now();
-  return memberships.find((item) => (
-    item.status === "active"
-    && item.expiresAt
-    && new Date(item.expiresAt).getTime() > nowTime
-  )) || null;
+  return memberships
+    .filter((item) => (
+      item.status === "active"
+      && item.expiresAt
+      && new Date(item.expiresAt).getTime() > nowTime
+    ))
+    .sort((a, b) => new Date(b.expiresAt).getTime() - new Date(a.expiresAt).getTime())[0] || null;
 }
 
 async function getAdvisorUsage(userId, openId) {
@@ -305,6 +318,8 @@ app.post("/orders", asyncRoute(async (req, res) => {
     productName: product.title,
     amount: Number(product.amount || 0),
     currency: product.currency || "CNY",
+    planType: product.planType || "",
+    durationDays: Number(product.durationDays || 0),
     status: "pending",
     paymentParams: null,
   }, "orderId");
@@ -392,7 +407,8 @@ app.post("/membership/activate", asyncRoute(async (req, res) => {
   const userId = `user_${getUserId(req)}`;
   const openId = getOpenId(req);
   const order = req.body.orderId ? await findById("orders", req.body.orderId) : null;
-  if (!order || order.status !== "paid" || order.productType !== "membership_monthly") {
+  const membershipPlan = order ? getMembershipPlan(order.productType) : null;
+  if (!order || order.status !== "paid" || !membershipPlan) {
     res.status(400).send({
       code: 400,
       message: "会员订单未完成支付",
@@ -409,12 +425,21 @@ app.post("/membership/activate", asyncRoute(async (req, res) => {
     return;
   }
   const startedAt = now();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const latestActive = memberships
+    .filter((item) => item.status === "active" && item.expiresAt)
+    .sort((a, b) => new Date(b.expiresAt).getTime() - new Date(a.expiresAt).getTime())[0];
+  const baseTime = latestActive && new Date(latestActive.expiresAt).getTime() > Date.now()
+    ? new Date(latestActive.expiresAt).getTime()
+    : Date.now();
+  const durationDays = Number(membershipPlan.durationDays || 30);
+  const expiresAt = new Date(baseTime + durationDays * 24 * 60 * 60 * 1000).toISOString();
   const membership = await upsert("memberships", {
     membershipId: createId("membership"),
     userId,
     openId,
-    planType: "monthly",
+    planType: membershipPlan.planType,
+    productType: order.productType,
+    durationDays,
     status: "active",
     startedAt,
     expiresAt,
