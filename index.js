@@ -15,6 +15,7 @@ const {
 } = require("./payment");
 
 const logger = morgan("tiny");
+const isProduction = process.env.NODE_ENV === "production";
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -25,6 +26,26 @@ app.use(express.json({
 }));
 app.use(cors());
 app.use(logger);
+
+function logInfo(message, detail = {}) {
+  if (isProduction && process.env.ENABLE_VERBOSE_LOGS !== "true") return;
+  console.log(message, detail);
+}
+
+function logWarn(message, detail = {}) {
+  console.warn(message, detail);
+}
+
+function logError(message, error, detail = {}) {
+  const safeError = error ? {
+    name: error.name || "Error",
+    message: error.message || String(error),
+  } : {};
+  console.error(message, {
+    ...detail,
+    error: safeError,
+  });
+}
 
 // 首页
 app.get("/", async (req, res) => {
@@ -169,7 +190,10 @@ async function buildEntitlement(req) {
 function asyncRoute(handler) {
   return (req, res) => {
     Promise.resolve(handler(req, res)).catch((error) => {
-      console.error(error);
+      logError("[route/error]", error, {
+        method: req.method,
+        path: req.path,
+      });
       res.status(500).send({
         code: -1,
         message: error.message || "server error",
@@ -180,6 +204,13 @@ function asyncRoute(handler) {
 
 function debugRoute(handler) {
   return asyncRoute(async (req, res) => {
+    if (process.env.ENABLE_DEBUG_ROUTES !== "true") {
+      res.status(404).send({
+        code: 404,
+        message: "not found",
+      });
+      return;
+    }
     const token = process.env.DEBUG_TOKEN || "";
     const requestToken = req.headers["x-debug-token"] || req.query.debug_token || "";
     if (!token || requestToken !== token) {
@@ -295,10 +326,9 @@ app.post("/orders/notify", asyncRoute(async (req, res) => {
   const transaction = decryptResource(resource);
   const orderId = transaction.out_trade_no;
   const existingOrder = await findById("orders", orderId);
-  console.log("[orders/notify]", {
+  logInfo("[orders/notify]", {
     orderId,
     tradeState: transaction.trade_state,
-    transactionId: transaction.transaction_id || "",
     hasExistingOrder: Boolean(existingOrder),
   });
   if (existingOrder) {
@@ -323,7 +353,13 @@ app.post("/orders/verify", asyncRoute(async (req, res) => {
     return;
   }
   const transaction = await queryOrder(order.orderId).catch((error) => {
-    console.error("[orders/verify] query failed:", error.message);
+    logWarn("[orders/verify] query failed", {
+      orderId: order.orderId,
+      error: {
+        name: error.name || "Error",
+        message: error.message || String(error),
+      },
+    });
     return null;
   });
   if (!transaction) {
@@ -419,16 +455,19 @@ app.post("/advisor/ask", asyncRoute(async (req, res) => {
     maxTokens: 1200,
   }).catch((error) => {
     aiSource = "fallback";
-    console.error("[advisor/ask] AI fallback:", error.message);
-    return {
-      ...fallback,
-      debugMessage: error.message,
-    };
+    logWarn("[advisor/ask] AI fallback", {
+      scenario,
+      profileId: profile && profile.profileId ? profile.profileId : "",
+      error: {
+        name: error.name || "Error",
+        message: error.message || String(error),
+      },
+    });
+    return fallback;
   }) || {
     ...fallback,
-    debugMessage: "OPENAI_BASE_URL 或 OPENAI_API_KEY 未配置",
   };
-  if (answer && answer.debugMessage === "OPENAI_BASE_URL 或 OPENAI_API_KEY 未配置") {
+  if (!answer || aiSource !== "remote") {
     aiSource = "fallback";
   }
   const chat = await upsert("chats", {
@@ -441,12 +480,10 @@ app.post("/advisor/ask", asyncRoute(async (req, res) => {
     answer,
     aiSource,
   }, "chatId");
-  console.log("[advisor/ask]", {
-    question,
+  logInfo("[advisor/ask]", {
     aiSource,
-    model: process.env.OPENAI_MODEL || "gpt-5.4-mini",
-    hasBaseUrl: Boolean(process.env.OPENAI_BASE_URL),
-    hasApiKey: Boolean(process.env.OPENAI_API_KEY),
+    scenario,
+    profileId: profile && profile.profileId ? profile.profileId : "",
   });
   ok(res, {
     answer,
@@ -465,7 +502,12 @@ app.post("/ai/daily-companion", asyncRoute(async (req, res) => {
     useJsonResponseFormat: req.body.useJsonResponseFormat !== false,
   }).catch((error) => {
     aiSource = "fallback";
-    console.error("[ai/daily-companion] AI fallback:", error.message);
+    logWarn("[ai/daily-companion] AI fallback", {
+      error: {
+        name: error.name || "Error",
+        message: error.message || String(error),
+      },
+    });
     return fallback || {
       response: "今天先把自己放回心里。能记录下此刻状态，就已经是在温柔地照看自己。",
       action: "只做一件最小的小事。",
@@ -510,14 +552,17 @@ app.post("/ai/deep-report", asyncRoute(async (req, res) => {
     useJsonResponseFormat: req.body.useJsonResponseFormat !== false,
   }).catch((error) => {
     aiSource = "fallback";
-    console.error("[ai/deep-report] AI fallback:", error.message);
-    return {
-      ...buildLocalDeepReport(req.body),
-      aiDebugMessage: error.message,
-    };
+    logWarn("[ai/deep-report] AI fallback", {
+      profileId,
+      inputHash: inputHash ? inputHash.slice(0, 12) : "",
+      error: {
+        name: error.name || "Error",
+        message: error.message || String(error),
+      },
+    });
+    return buildLocalDeepReport(req.body);
   }) || {
     ...buildLocalDeepReport(req.body),
-    aiDebugMessage: "OPENAI_BASE_URL 或 OPENAI_API_KEY 未配置",
   };
   if (profileId) {
     await upsert("reports", {
@@ -531,19 +576,16 @@ app.post("/ai/deep-report", asyncRoute(async (req, res) => {
       report,
       aiSource,
     }, "reportId").catch((error) => {
-      console.error("[ai/deep-report] save report failed:", {
-        message: error.message,
-        name: error.name,
+      logError("[ai/deep-report] save report failed", error, {
         errors: Array.isArray(error.errors)
           ? error.errors.map((item) => ({
               message: item.message,
               path: item.path,
-              value: item.value,
             }))
           : [],
         reportId,
         profileId,
-        inputHash,
+        inputHash: inputHash ? inputHash.slice(0, 12) : "",
       });
     });
   }
@@ -558,7 +600,7 @@ app.post("/analytics/events", asyncRoute(async (req, res) => {
       receivedAt: now(),
     }, "eventId")));
   if (events.length) {
-    console.log("[analytics/events]", {
+    logInfo("[analytics/events]", {
       accepted: events.length,
       firstEventName: events[0] && events[0].eventName,
     });
@@ -576,10 +618,9 @@ app.post("/errors/report", asyncRoute(async (req, res) => {
       receivedAt: now(),
     }, "errorId")));
   if (errors.length) {
-    console.error("[errors/report]", {
+    logWarn("[errors/report]", {
       accepted: errors.length,
-      firstMessage: errors[0] && errors[0].message,
-      firstContext: errors[0] && errors[0].context,
+      firstContextSource: errors[0] && errors[0].context ? errors[0].context.source || errors[0].context.page || "" : "",
     });
   }
   ok(res, {
@@ -643,7 +684,7 @@ const port = process.env.PORT || 80;
 async function bootstrap() {
   await initDB();
   app.listen(port, () => {
-    console.log("启动成功", port);
+    logInfo("[server/start]", { port });
   });
 }
 
