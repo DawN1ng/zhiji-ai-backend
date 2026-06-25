@@ -160,6 +160,9 @@ async function buildEntitlement(req) {
     advisorRemainingToday: Math.max(0, advisorDailyLimit - advisorUsedToday),
     canViewAdvancedToday: isMember,
     canSaveTodayHistory: isMember,
+    canViewFullEnergyReview: isMember,
+    canViewFullSolarTerm: isMember,
+    canUseEnhancedCompanion: isMember,
   };
 }
 
@@ -442,6 +445,35 @@ app.post("/advisor/ask", asyncRoute(async (req, res) => {
     answer,
     aiSource,
     chatId: chat.chatId,
+  });
+}));
+
+app.post("/ai/daily-companion", asyncRoute(async (req, res) => {
+  let aiSource = "remote";
+  const fallback = req.body && req.body.payload ? req.body.payload.fallback : null;
+  const answer = await callOpenAICompatible("dailyCompanion", req.body, {
+    model: req.body.model,
+    temperature: req.body.temperature,
+    maxTokens: Math.min(Number(req.body.maxTokens || 480), 700),
+    useJsonResponseFormat: req.body.useJsonResponseFormat !== false,
+  }).catch((error) => {
+    aiSource = "fallback";
+    console.error("[ai/daily-companion] AI fallback:", error.message);
+    return fallback || {
+      response: "今天先把自己放回心里。能记录下此刻状态，就已经是在温柔地照看自己。",
+      action: "只做一件最小的小事。",
+      focus: "照看自己",
+      review: "",
+    };
+  }) || fallback || {
+    response: "今天先把自己放回心里。能记录下此刻状态，就已经是在温柔地照看自己。",
+    action: "只做一件最小的小事。",
+    focus: "照看自己",
+    review: "",
+  };
+  ok(res, {
+    ...answer,
+    aiSource,
   });
 }));
 

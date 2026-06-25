@@ -104,7 +104,14 @@ function buildSystemPrompt(moduleName) {
       'JSON 结构：{"title":"...","subtitle":"...","summary":"...","readingFocus":["..."],"sections":[{"key":"personality","title":"...","body":"...","points":["..."],"practice":"..."}],"quote":"..."}',
       '整份报告正文目标 3000-4500 字，不要写成摘要。',
       'summary 约 260-360 字；每个 section.body 约 320-520 字；每章 points 4-6 条，每条 24-56 字；practice 约 80-140 字。',
-      '每个章节都要具体展开：先解释五行结构如何影响该主题，再写优势、风险、适合的场景和可执行建议。'
+      '每个章节都要具体展开：先解释五行结构如何影响该主题，再写优势、风险、适合的场景和可执行建议。',
+      '必须严格遵守输入的人格类型、人格名称、主元素、辅元素和五行分数，不得重新计算、改名、调换主辅元素或写出与分数排序相反的判断。'
+    ].join("\n"),
+    dailyCompanion: [
+      '只返回 JSON，不要 Markdown，不要解释。',
+      'JSON 结构：{"response":"...","action":"...","focus":"...","signTitle":"...","signText":"...","review":"..."}',
+      'response 是 45-80 字中文温柔回应；action 是 20-36 字可执行小行动；focus 是 4-10 字关注侧重点；review 是 80-140 字七日回顾。',
+      '不要医疗诊断、不要现实承诺、不要命令用户。'
     ].join("\n")
   };
   return [
@@ -120,27 +127,53 @@ function buildUserPrompt(moduleName, payload) {
   if (moduleName === "deepReport") {
     const input = payload && payload.payload ? payload.payload : payload;
     const profile = input && input.profile ? input.profile : {};
+    const elementNameMap = {
+      wood: "木",
+      fire: "火",
+      earth: "土",
+      metal: "金",
+      water: "水",
+    };
+    const mainElement = elementNameMap[profile.mainElement] || profile.mainElement || "";
+    const secondaryElement = elementNameMap[profile.secondaryElement] || profile.secondaryElement || "";
     return [
       `用户昵称：${profile.nickname || "用户"}`,
       `关注问题：${profile.concern || "自我认知"}`,
       `人格类型：${profile.personalityType || ""} · ${profile.personalityName || ""}`,
-      `主元素：${profile.mainElement || ""}`,
-      `辅元素：${profile.secondaryElement || ""}`,
+      `主元素：${mainElement}`,
+      `辅元素：${secondaryElement}`,
       `关键词：${(profile.keywords || []).join(" / ")}`,
-      `五行分数：${JSON.stringify(profile.wuxingScores || {})}`,
+      `人格基础五行分数：${JSON.stringify(profile.baseWuxingScores || profile.wuxingScores || {})}`,
+      `当前关注议题加权后分数：${JSON.stringify(profile.concernWuxingScores || {})}`,
+      `关注议题加权：${JSON.stringify(profile.concernWeights || {})}`,
+      `节气与干支依据：${JSON.stringify(profile.scoreBasis || {})}`,
       `promptVersion：${payload.promptVersion || ""}`,
       `schemaVersion：${payload.schemaVersion || ""}`,
       "",
       "请生成一份完整深度报告，要求：",
       "1. 每章都要围绕用户的五行结构展开，不要写成通用性格文案，也不要只给短段落。",
-      "2. 事业、财富、关系、情绪建议必须保持“倾向与观察”口吻，避免绝对化承诺。",
-      "3. 财富部分只能讨论能力、价值交换、节奏和风险意识，不提供任何投资建议。",
-      "4. 情感部分只能讨论沟通模式和关系观察，不预测婚姻结果。",
-      "5. 情绪部分只能给自我觉察和日常调节建议，不做医疗判断。",
-      "6. 未来 90 天节律请分成前 30 天、中 30 天、后 30 天三个阶段。",
-      "7. 专属行动建议要可执行，适合放进小程序报告页直接展示。",
-      "8. 输出体量请接近付费报告：总览充分、七个章节完整，每章不要少于 320 个中文字符。"
+      "2. 人格基础五行分数决定主辅元素和人格结构；当前关注议题加权后分数只能用于解释用户当下关心的问题，不得替代人格本体。",
+      "3. 必须保持主元素、辅元素、人格类型、人格名称与输入完全一致，不得重新计算或调换。",
+      "4. 如果提到分数，请按输入分数解释，不得写出与分数高低相反的结论。",
+      "5. 事业、财富、关系、情绪建议必须保持“倾向与观察”口吻，避免绝对化承诺。",
+      "6. 财富部分只能讨论能力、价值交换、节奏和风险意识，不提供任何投资建议。",
+      "7. 情感部分只能讨论沟通模式和关系观察，不预测婚姻结果。",
+      "8. 情绪部分只能给自我觉察和日常调节建议，不做医疗判断。",
+      "9. 未来 90 天节律请分成前 30 天、中 30 天、后 30 天三个阶段。",
+      "10. 专属行动建议要可执行，适合放进小程序报告页直接展示。",
+      "11. 输出体量请接近付费报告：总览充分、七个章节完整，每章不要少于 320 个中文字符。",
+      "12. 五行元素必须使用中文“木、火、土、金、水”，不要输出 wood、fire、earth、metal、water。"
     ].join("\n");
+  }
+  if (moduleName === "dailyCompanion") {
+    const input = payload && payload.payload ? payload.payload : payload;
+    return JSON.stringify({
+      task: input.task || "daily_response",
+      profile: input.profile || {},
+      today: input.today || {},
+      checkin: input.checkin || {},
+      entitlement: input.entitlement || {}
+    });
   }
   return JSON.stringify({
     task: moduleName,
