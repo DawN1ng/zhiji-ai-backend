@@ -237,6 +237,13 @@ app.post("/reports/archive", asyncRoute(async (req, res) => {
   ok(res, report);
 }));
 
+app.post("/reports/delete-history", asyncRoute(async (req, res) => {
+  const openId = getOpenId(req);
+  const userId = `user_${getUserId(req)}`;
+  await removeByUser(["profiles", "reports"], userId, openId);
+  ok(res, { deleted: true });
+}));
+
 app.post("/account/delete-data", asyncRoute(async (req, res) => {
   const openId = getOpenId(req);
   const userId = `user_${getUserId(req)}`;
