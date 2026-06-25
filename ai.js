@@ -34,7 +34,7 @@ function buildLocalDeepReport(payload) {
   };
   const mainElement = elementNameMap[profile.mainElement] || profile.mainElement || '水';
   const secondaryElement = elementNameMap[profile.secondaryElement] || profile.secondaryElement || '火';
-  const type = `${profile.personalityType || "五行人格"} · ${profile.personalityName || "自我观察者"}`;
+  const type = `${profile.personalityType || "状态画像"} · ${profile.personalityName || "自我观察者"}`;
   const concern = profile.concern || "自我认知";
   return {
     title: `${type}深度报告`,
@@ -138,7 +138,7 @@ function buildSystemPrompt(moduleName) {
     ].join("\n")
   };
   return [
-    "你是「知己AI」的东方五行人格顾问。",
+    "你是「知己AI」的自我探索顾问。",
     "风格：新中式、克制、温和、清醒，有文化感。",
     "边界：用于自我认知、情绪陪伴和娱乐参考，不构成医疗、法律、投资、婚姻等现实决策建议。",
     "禁止使用：算命、改命、转运、消灾、必然、命中注定、疾病预测、投资建议等表达。",
@@ -159,8 +159,12 @@ function buildUserPrompt(moduleName, payload) {
     };
     const mainElement = elementNameMap[profile.mainElement] || profile.mainElement || "";
     const secondaryElement = elementNameMap[profile.secondaryElement] || profile.secondaryElement || "";
+    const questionnaireAnswers = Array.isArray(profile.questionnaireAnswers)
+      ? profile.questionnaireAnswers.map((item) => `${item.title || ""}：${item.answer || ""}`).filter(Boolean)
+      : [];
     return [
       `用户昵称：${profile.nickname || "用户"}`,
+      `输入来源：${profile.inputMode === "questionnaire" ? "用户自评问卷" : "历史档案"}`,
       `关注问题：${profile.concern || "自我认知"}`,
       `人格类型：${profile.personalityType || ""} · ${profile.personalityName || ""}`,
       `主元素：${mainElement}`,
@@ -169,7 +173,7 @@ function buildUserPrompt(moduleName, payload) {
       `人格基础五行分数：${JSON.stringify(profile.baseWuxingScores || profile.wuxingScores || {})}`,
       `当前关注议题加权后分数：${JSON.stringify(profile.concernWuxingScores || {})}`,
       `关注议题加权：${JSON.stringify(profile.concernWeights || {})}`,
-      `节气与干支依据：${JSON.stringify(profile.scoreBasis || {})}`,
+      `用户自评线索：${questionnaireAnswers.join("；") || "暂无"}`,
       `promptVersion：${payload.promptVersion || ""}`,
       `schemaVersion：${payload.schemaVersion || ""}`,
       "",
@@ -263,9 +267,9 @@ function getAIConfigStatus() {
 }
 
 function buildAdvisorFallback(question, profile) {
-  const type = profile ? `${profile.personalityType || ""} · ${profile.personalityName || ""}` : "五行人格";
+  const type = profile ? `${profile.personalityType || ""} · ${profile.personalityName || ""}` : "状态画像";
   return {
-    structure: `你的五行人格结构呈现为「${type}」，这个问题适合先从自身节律与真实需求看起。`,
+    structure: `你的状态画像呈现为「${type}」，这个问题适合先从自身节律与真实需求看起。`,
     conflict: "问题背后的核心矛盾，往往是安全感、期待与行动节奏之间还没有对齐。",
     advantage: "你的优势在于能够观察细节，也愿意认真理解自己和关系中的变化。",
     pitfall: "容易踩的坑是想得太满、行动太晚，或在情绪高点急着做结论。",
