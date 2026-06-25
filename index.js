@@ -54,8 +54,27 @@ const MEMBERSHIP_PLAN_MAP = {
   membership_six_months: { planType: "six_months", durationDays: 180 },
 };
 
+const DEEP_REPORT_PRICING = {
+  regularAmount: 6.88,
+  memberAmount: 0.88,
+};
+
 function getMembershipPlan(productType) {
   return MEMBERSHIP_PLAN_MAP[productType] || null;
+}
+
+async function normalizeOrderProduct(req, product, profile) {
+  if (product.productType !== "deep_report") return product;
+  const openId = profile.openId || getOpenId(req);
+  const userId = profile.userId || `user_${getUserId(req)}`;
+  const membership = await getActiveMembership(userId, openId);
+  const amount = membership ? DEEP_REPORT_PRICING.memberAmount : DEEP_REPORT_PRICING.regularAmount;
+  return {
+    ...product,
+    title: product.title || "深度报告",
+    amount,
+    currency: product.currency || "CNY",
+  };
 }
 
 // 首页
@@ -192,6 +211,7 @@ async function buildEntitlement(req) {
     advisorDailyLimit,
     advisorUsedToday,
     advisorRemainingToday: Math.max(0, advisorDailyLimit - advisorUsedToday),
+    reportDiscountRate: isMember ? DEEP_REPORT_PRICING.memberAmount / DEEP_REPORT_PRICING.regularAmount : 1,
     canViewAdvancedToday: isMember,
     canSaveTodayHistory: isMember,
     canViewFullEnergyReview: isMember,
@@ -296,7 +316,7 @@ app.post("/account/delete-data", asyncRoute(async (req, res) => {
 }));
 
 app.post("/orders", asyncRoute(async (req, res) => {
-  const product = req.body.product || {};
+  const product = await normalizeOrderProduct(req, req.body.product || {}, req.body.profile || {});
   const profile = req.body.profile || {};
   const existingPaid = product.productType === "deep_report" && profile.profileId
     ? await findOneByFields("orders", {
