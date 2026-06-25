@@ -490,7 +490,7 @@ app.post("/ai/deep-report", asyncRoute(async (req, res) => {
     : req.body.profile;
   const profileId = profile && profile.profileId ? profile.profileId : "";
   const inputHash = req.body && req.body.inputHash ? req.body.inputHash : "";
-  const schemaVersion = req.body && req.body.schemaVersion ? req.body.schemaVersion : "deep_report_v3_longform";
+  const schemaVersion = req.body && req.body.schemaVersion ? req.body.schemaVersion : "deep_report_v4_action_handbook";
   const reportId = inputHash ? `deep_${inputHash}` : `deep_${profileId}_${schemaVersion}`;
   if (profileId || inputHash) {
     const existingReport = await findOneByFields("reports", {
