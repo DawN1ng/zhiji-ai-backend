@@ -162,7 +162,7 @@ MYSQL_DATABASE=nodejs_demo
 1. 在 **基本配置 / 基础配置** 记录 `offerId`、沙箱 `AppKey` 和现网 `AppKey`，分别写入上面的环境变量。
 2. 在 **道具管理** 创建并发布以下道具，价格需与代码保持一致：
    - `deep_report_regular`：深度报告，2.88 元
-   - `deep_report_member`：月令价深度报告，0.88 元
+   - `deep_report_member`：月令价深度报告，1 元
    - `zj_month_1m`：知己月令 1 个月，16.6 元
    - `zj_month_3m`：知己月令 3 个月，38.8 元
    - `zj_month_6m`：知己月令 6 个月，88.8 元

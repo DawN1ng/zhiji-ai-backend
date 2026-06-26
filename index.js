@@ -65,7 +65,7 @@ const MEMBERSHIP_PLAN_MAP = {
 
 const DEEP_REPORT_PRICING = {
   regularAmount: 2.88,
-  memberAmount: 0.88,
+  memberAmount: 1,
 };
 
 const MEMBERSHIP_PRODUCT_MAP = {
