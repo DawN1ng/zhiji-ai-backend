@@ -445,6 +445,10 @@ function debugRoute(handler) {
   });
 }
 
+function isLegacyWechatPayNotifyEnabled() {
+  return process.env.WECHAT_PAY_LEGACY_NOTIFY_ENABLED === "true";
+}
+
 app.post("/auth/wechat/login", asyncRoute(async (req, res) => {
   let session = null;
   if (req.body && req.body.code) {
@@ -559,6 +563,14 @@ app.post("/orders", asyncRoute(async (req, res) => {
 }));
 
 app.post("/orders/notify", asyncRoute(async (req, res) => {
+  if (!isLegacyWechatPayNotifyEnabled()) {
+    logWarn("[orders/notify] ignored legacy wechat pay notification", {
+      path: req.path,
+      paymentProvider: "wechatPayLegacy",
+    });
+    res.send({ code: "SUCCESS", message: "legacy notify ignored" });
+    return;
+  }
   verifyNotifySignature(req.headers, req.rawBody);
   const resource = req.body && req.body.resource;
   if (!resource) {
