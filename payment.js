@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const fetch = require("node-fetch");
+const fetch = global.fetch || require("node-fetch");
 
 const WECHAT_PAY_API = "https://api.mch.weixin.qq.com";
 

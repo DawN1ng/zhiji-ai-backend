@@ -125,13 +125,16 @@ OPENAI_BASE_URL=大模型代理地址
 OPENAI_API_KEY=大模型代理 Key
 OPENAI_MODEL=gpt-5.4-mini
 WECHAT_APPID=小程序 AppID
-WECHAT_PAY_MCH_ID=微信支付商户号
-WECHAT_PAY_SERIAL_NO=商户 API 证书序列号
-WECHAT_PAY_PRIVATE_KEY=商户 API 私钥，换行可写成 \n
-WECHAT_PAY_API_V3_KEY=微信支付 API v3 密钥
-WECHAT_PAY_NOTIFY_URL=https://你的后端域名/orders/notify
-WECHAT_PAY_PUBLIC_KEY=微信支付公钥内容，换行可写成 \n
-WECHAT_PAY_PUBLIC_KEY_ID=微信支付公钥 ID，通常形如 PUB_KEY_ID_...
+WECHAT_APP_SECRET=小程序 AppSecret，用于 code2Session、access_token 与虚拟支付查单
+WECHAT_VPAY_OFFER_ID=虚拟支付基础配置里的 offerId
+WECHAT_VPAY_ENV=1
+WECHAT_VPAY_APPKEY_SANDBOX=虚拟支付沙箱 AppKey
+WECHAT_VPAY_APPKEY_PROD=虚拟支付现网 AppKey
+WECHAT_VPAY_GOODS_DEEP_REPORT_REGULAR=deep_report_regular
+WECHAT_VPAY_GOODS_DEEP_REPORT_MEMBER=deep_report_member
+WECHAT_VPAY_GOODS_MEMBERSHIP_ONE_MONTH=zj_month_1m
+WECHAT_VPAY_GOODS_MEMBERSHIP_THREE_MONTHS=zj_month_3m
+WECHAT_VPAY_GOODS_MEMBERSHIP_SIX_MONTHS=zj_month_6m
 ENABLE_DEBUG_ROUTES=false
 DEBUG_TOKEN=调试接口访问令牌；仅在 ENABLE_DEBUG_ROUTES=true 时生效
 MYSQL_ADDRESS=MySQL 连接地址
@@ -152,17 +155,41 @@ MYSQL_DATABASE=nodejs_demo
 
 用于检查环境变量是否被服务读取。生产环境保持 `ENABLE_DEBUG_ROUTES=false` 或不配置时，调试接口默认返回 404。
 
+## 虚拟支付后台配置
+
+进入小程序管理后台的 **虚拟支付** 模块，完成签约后：
+
+1. 在 **基本配置 / 基础配置** 记录 `offerId`、沙箱 `AppKey` 和现网 `AppKey`，分别写入上面的环境变量。
+2. 在 **道具管理** 创建并发布以下道具，价格需与代码保持一致：
+   - `deep_report_regular`：深度报告，2.88 元
+   - `deep_report_member`：月令价深度报告，0.88 元
+   - `zj_month_1m`：知己月令 1 个月，16.6 元
+   - `zj_month_3m`：知己月令 3 个月，38.8 元
+   - `zj_month_6m`：知己月令 6 个月，88.8 元
+3. 在发货订阅/消息推送中配置：
+   - `https://你的后端域名/virtual-payment/notify`
+   - 至少订阅 `xpay_goods_deliver_notify` 和 `xpay_refund_notify`。
+4. 沙箱联调时保持 `WECHAT_VPAY_ENV=1`；发布现网前切换为 `WECHAT_VPAY_ENV=0`，并确认现网道具已发布、现网 AppKey 已配置。
+
 ## 支付接口
 
-- `POST /orders`：创建深度报告订单，并通过微信支付 JSAPI 下单，返回小程序 `wx.requestPayment` 所需参数。
-- `POST /orders/verify`：按商户订单号向微信支付查单，并同步本地订单状态。
-- `POST /orders/notify`：微信支付回调地址，解密支付通知并更新本地订单。
+- `POST /orders`：创建深度报告或知己月令订单，返回小程序 `wx.requestVirtualPayment` 所需的 `signData`、`paySig`、`signature` 和 `mode`。
+- `POST /orders/verify`：按商户订单号调用虚拟支付 `/xpay/query_order` 查单，并同步本地订单状态。
+- `POST /virtual-payment/notify`：虚拟支付发货、退款、投诉消息推送地址。发货推送会幂等更新订单并激活会员权益。
+- `POST /membership/activate`：保留给前端支付成功后主动激活会员；接口已做幂等处理，推送已激活时重复调用会返回已有权益。
 
-未配置完整微信支付环境变量时，下单会返回明确错误，不会生成可误用的假支付参数。
+未配置完整虚拟支付环境变量或道具 ID 时，下单会返回明确错误，不会生成可误用的支付参数。
 
-支付回调验签优先使用微信支付公钥。如果仍使用旧平台证书模式，也兼容以下变量：
+历史普通微信支付 JSAPI 代码仍保留用于回滚，但深度报告和知己月令的主链路已经切换到虚拟支付。若临时回滚普通微信支付，仍需恢复并配置以下旧变量：
 
 ```text
+WECHAT_PAY_MCH_ID=微信支付商户号
+WECHAT_PAY_SERIAL_NO=商户 API 证书序列号
+WECHAT_PAY_PRIVATE_KEY=商户 API 私钥，换行可写成 \n
+WECHAT_PAY_API_V3_KEY=微信支付 API v3 密钥
+WECHAT_PAY_NOTIFY_URL=https://你的后端域名/orders/notify
+WECHAT_PAY_PUBLIC_KEY=微信支付公钥内容，换行可写成 \n
+WECHAT_PAY_PUBLIC_KEY_ID=微信支付公钥 ID，通常形如 PUB_KEY_ID_...
 WECHAT_PAY_PLATFORM_CERTIFICATE=微信支付平台证书内容，换行可写成 \n
 WECHAT_PAY_PLATFORM_SERIAL_NO=微信支付平台证书序列号
 ```

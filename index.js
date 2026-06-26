@@ -6,13 +6,21 @@ const { init: initDB, Counter, dbStatus } = require("./db");
 const { now, createId, upsert, findById, findOneByFields, filterByUser, removeByUser } = require("./store");
 const { callOpenAICompatible, buildLocalDeepReport, getAIConfigStatus, buildAdvisorFallback } = require("./ai");
 const {
-  createJsapiPayment,
-  queryOrder,
   mapTradeStateToOrderStatus,
   decryptResource,
   verifyNotifySignature,
   getPaymentConfigStatus,
 } = require("./payment");
+const {
+  code2Session,
+  fenFromYuan,
+  buildVirtualPaymentParams,
+  queryVirtualOrder,
+  notifyVirtualGoodsProvided,
+  mapVirtualOrderStatus,
+  getVirtualPaymentConfig,
+  getVirtualPaymentConfigStatus,
+} = require("./virtualPayment");
 
 const logger = morgan("tiny");
 const isProduction = process.env.NODE_ENV === "production";
@@ -24,6 +32,7 @@ app.use(express.json({
     req.rawBody = buf.toString("utf8");
   },
 }));
+app.use(express.text({ type: ["text/*", "application/xml", "text/xml"] }));
 app.use(cors());
 app.use(logger);
 
@@ -55,8 +64,47 @@ const MEMBERSHIP_PLAN_MAP = {
 };
 
 const DEEP_REPORT_PRICING = {
-  regularAmount: 6.88,
+  regularAmount: 2.88,
   memberAmount: 0.88,
+};
+
+const MEMBERSHIP_PRODUCT_MAP = {
+  membership_monthly: {
+    planType: "one_month",
+    productType: "membership_one_month",
+    title: "知己月令 · 1 个月",
+    amount: 16.6,
+    currency: "CNY",
+    durationDays: 30,
+    virtualProductKey: "membershipOneMonth",
+  },
+  membership_one_month: {
+    planType: "one_month",
+    productType: "membership_one_month",
+    title: "知己月令 · 1 个月",
+    amount: 16.6,
+    currency: "CNY",
+    durationDays: 30,
+    virtualProductKey: "membershipOneMonth",
+  },
+  membership_three_months: {
+    planType: "three_months",
+    productType: "membership_three_months",
+    title: "知己月令 · 3 个月",
+    amount: 38.8,
+    currency: "CNY",
+    durationDays: 90,
+    virtualProductKey: "membershipThreeMonths",
+  },
+  membership_six_months: {
+    planType: "six_months",
+    productType: "membership_six_months",
+    title: "知己月令 · 6 个月",
+    amount: 88.8,
+    currency: "CNY",
+    durationDays: 180,
+    virtualProductKey: "membershipSixMonths",
+  },
 };
 
 function getMembershipPlan(productType) {
@@ -64,16 +112,26 @@ function getMembershipPlan(productType) {
 }
 
 async function normalizeOrderProduct(req, product, profile) {
-  if (product.productType !== "deep_report") return product;
+  if (!product || !product.productType) {
+    throw new Error("缺少商品类型");
+  }
+  if (product.productType !== "deep_report") {
+    const membershipProduct = MEMBERSHIP_PRODUCT_MAP[product.productType] || MEMBERSHIP_PRODUCT_MAP[product.planType];
+    if (!membershipProduct) {
+      throw new Error(`未知商品类型：${product.productType}`);
+    }
+    return membershipProduct;
+  }
   const openId = profile.openId || getOpenId(req);
   const userId = profile.userId || `user_${getUserId(req)}`;
   const membership = await getActiveMembership(userId, openId);
   const amount = membership ? DEEP_REPORT_PRICING.memberAmount : DEEP_REPORT_PRICING.regularAmount;
   return {
-    ...product,
+    productType: "deep_report",
     title: product.title || "深度报告",
     amount,
-    currency: product.currency || "CNY",
+    currency: "CNY",
+    virtualProductKey: membership ? "deepReportMember" : "deepReportRegular",
   };
 }
 
@@ -135,6 +193,16 @@ function ok(res, data = {}) {
     code: 0,
     data,
   });
+}
+
+function sanitizeUser(user) {
+  if (!user) return user;
+  const {
+    sessionKey,
+    session_key: sessionKeySnake,
+    ...safeUser
+  } = user;
+  return safeUser;
 }
 
 function getOpenId(req) {
@@ -220,6 +288,126 @@ async function buildEntitlement(req) {
   };
 }
 
+async function getSessionKeyForOpenId(openId) {
+  if (!openId || /^local_/.test(openId)) return "";
+  const user = await findById("users", `user_${openId}`);
+  return user && user.sessionKey ? user.sessionKey : "";
+}
+
+async function activateMembershipForOrder(order) {
+  const membershipPlan = order ? getMembershipPlan(order.productType) : null;
+  if (!order || order.status !== "paid" || !membershipPlan) {
+    throw new Error("会员订单未完成支付");
+  }
+  const userId = order.userId || `user_${order.openId || "guest"}`;
+  const openId = order.openId || "";
+  const memberships = await filterByUser("memberships", userId, openId);
+  const usedMembership = memberships.find((item) => item.sourceOrderId === order.orderId);
+  if (usedMembership) return usedMembership;
+
+  const startedAt = now();
+  const latestActive = memberships
+    .filter((item) => item.status === "active" && item.expiresAt)
+    .sort((a, b) => new Date(b.expiresAt).getTime() - new Date(a.expiresAt).getTime())[0];
+  const baseTime = latestActive && new Date(latestActive.expiresAt).getTime() > Date.now()
+    ? new Date(latestActive.expiresAt).getTime()
+    : Date.now();
+  const durationDays = Number(membershipPlan.durationDays || 30);
+  const expiresAt = new Date(baseTime + durationDays * 24 * 60 * 60 * 1000).toISOString();
+  return upsert("memberships", {
+    membershipId: createId("membership"),
+    userId,
+    openId,
+    planType: membershipPlan.planType,
+    productType: order.productType,
+    durationDays,
+    status: "active",
+    startedAt,
+    expiresAt,
+    sourceOrderId: order.orderId,
+  }, "membershipId");
+}
+
+async function markVirtualGoodsProvided(order) {
+  if (!order || order.virtualGoodsProvidedAt) return order;
+  try {
+    await notifyVirtualGoodsProvided(order);
+    return upsert("orders", {
+      ...order,
+      virtualGoodsProvidedAt: now(),
+      virtualGoodsProvideError: "",
+    }, "orderId");
+  } catch (error) {
+    logWarn("[virtual-payment/provide-goods] failed", {
+      orderId: order.orderId,
+      error: {
+        name: error.name || "Error",
+        message: error.message || String(error),
+      },
+    });
+    return upsert("orders", {
+      ...order,
+      virtualGoodsProvideError: error.message || String(error),
+    }, "orderId");
+  }
+}
+
+async function fulfillPaidOrder(order, options = {}) {
+  if (!order || order.status !== "paid") return order;
+  let nextOrder = order;
+  const membershipPlan = getMembershipPlan(order.productType);
+  if (membershipPlan) {
+    const membership = await activateMembershipForOrder(order);
+    nextOrder = await upsert("orders", {
+      ...nextOrder,
+      membershipId: membership.membershipId,
+      fulfilledAt: nextOrder.fulfilledAt || now(),
+    }, "orderId");
+  } else {
+    nextOrder = await upsert("orders", {
+      ...nextOrder,
+      fulfilledAt: nextOrder.fulfilledAt || now(),
+    }, "orderId");
+  }
+  if (options.notifyGoods) {
+    nextOrder = await markVirtualGoodsProvided(nextOrder);
+  }
+  return nextOrder;
+}
+
+function getVirtualNotifyPayload(req) {
+  if (typeof req.body === "string") {
+    return parseSimpleXml(req.body);
+  }
+  if (req.body && typeof req.body === "object") {
+    return req.body.xml && typeof req.body.xml === "object" ? req.body.xml : req.body;
+  }
+  if (req.rawBody && /^</.test(req.rawBody.trim())) {
+    return parseSimpleXml(req.rawBody);
+  }
+  return {};
+}
+
+function parseSimpleXml(xml) {
+  const data = {};
+  String(xml || "").replace(/<([A-Za-z0-9_]+)><!\[CDATA\[([\s\S]*?)\]\]><\/\1>|<([A-Za-z0-9_]+)>([\s\S]*?)<\/\3>/g, (match, cdataKey, cdataValue, textKey, textValue) => {
+    const key = cdataKey || textKey;
+    const value = cdataValue !== undefined ? cdataValue : textValue;
+    if (key && key !== "xml") data[key] = value;
+    return match;
+  });
+  return data;
+}
+
+function pickVirtualNotifyOrderId(payload) {
+  return payload.OutTradeNo
+    || payload.MchOrderId
+    || payload.MchOrderNo
+    || payload.order_id
+    || payload.out_trade_no
+    || "";
+}
+
 function asyncRoute(handler) {
   return (req, res) => {
     Promise.resolve(handler(req, res)).catch((error) => {
@@ -258,17 +446,25 @@ function debugRoute(handler) {
 }
 
 app.post("/auth/wechat/login", asyncRoute(async (req, res) => {
-  const openId = getOpenId(req) || `local_${req.body.anonymousId || createId("anon")}`;
-  const unionId = req.headers["x-wx-unionid"] || "";
+  let session = null;
+  if (req.body && req.body.code) {
+    session = await code2Session(req.body.code);
+  }
+  const openId = (session && (session.openid || session.openId))
+    || getOpenId(req)
+    || `local_${req.body.anonymousId || createId("anon")}`;
+  const unionId = (session && (session.unionid || session.unionId)) || req.headers["x-wx-unionid"] || "";
   const user = await upsert("users", {
     userId: `user_${openId}`,
     openId,
     unionId,
+    sessionKey: session && session.session_key ? session.session_key : "",
+    sessionKeyUpdatedAt: session && session.session_key ? now() : "",
   }, "userId");
   ok(res, {
     openId,
     unionId,
-    user,
+    user: sanitizeUser(user),
   });
 }));
 
@@ -318,6 +514,8 @@ app.post("/account/delete-data", asyncRoute(async (req, res) => {
 app.post("/orders", asyncRoute(async (req, res) => {
   const product = await normalizeOrderProduct(req, req.body.product || {}, req.body.profile || {});
   const profile = req.body.profile || {};
+  const openId = profile.openId || getOpenId(req);
+  const userId = profile.userId || `user_${getUserId(req)}`;
   const existingPaid = product.productType === "deep_report" && profile.profileId
     ? await findOneByFields("orders", {
         profileId: profile.profileId,
@@ -329,10 +527,13 @@ app.post("/orders", asyncRoute(async (req, res) => {
     ok(res, existingPaid);
     return;
   }
-  const order = await upsert("orders", {
-    orderId: createId("order"),
-    userId: profile.userId || `user_${getUserId(req)}`,
-    openId: profile.openId || getOpenId(req),
+  const orderId = createId("order");
+  const amountFen = fenFromYuan(product.amount);
+  const virtualConfig = getVirtualPaymentConfig();
+  const order = {
+    orderId,
+    userId,
+    openId,
     profileId: profile.profileId || "",
     productType: product.productType,
     productName: product.title,
@@ -340,10 +541,16 @@ app.post("/orders", asyncRoute(async (req, res) => {
     currency: product.currency || "CNY",
     planType: product.planType || "",
     durationDays: Number(product.durationDays || 0),
+    amountFen,
+    paymentProvider: "virtual",
+    virtualProductKey: product.virtualProductKey,
+    virtualProductId: virtualConfig.goods[product.virtualProductKey] || "",
+    virtualEnv: virtualConfig.env,
     status: "pending",
     paymentParams: null,
-  }, "orderId");
-  const paymentParams = await createJsapiPayment(order, req);
+  };
+  const sessionKey = await getSessionKeyForOpenId(order.openId);
+  const paymentParams = buildVirtualPaymentParams(order, product, sessionKey);
   const payableOrder = await upsert("orders", {
     ...order,
     paymentParams,
@@ -387,7 +594,7 @@ app.post("/orders/verify", asyncRoute(async (req, res) => {
     });
     return;
   }
-  const transaction = await queryOrder(order.orderId).catch((error) => {
+  const transaction = await queryVirtualOrder(order).catch((error) => {
     logWarn("[orders/verify] query failed", {
       orderId: order.orderId,
       error: {
@@ -401,14 +608,60 @@ app.post("/orders/verify", asyncRoute(async (req, res) => {
     ok(res, order);
     return;
   }
+  const xpayOrder = transaction.order || {};
+  const nextStatus = mapVirtualOrderStatus(xpayOrder.status);
   const verifiedOrder = await upsert("orders", {
     ...order,
-    status: mapTradeStateToOrderStatus(transaction.trade_state),
-    transactionId: transaction.transaction_id || order.transactionId || "",
-    paidAt: transaction.success_time || order.paidAt || "",
+    status: nextStatus,
+    transactionId: xpayOrder.wxpay_order_id || xpayOrder.wx_order_id || order.transactionId || "",
+    paidAt: xpayOrder.paid_time ? new Date(Number(xpayOrder.paid_time) * 1000).toISOString() : order.paidAt || "",
     paymentQuery: transaction,
+    xpayOrder,
   }, "orderId");
-  ok(res, verifiedOrder);
+  ok(res, nextStatus === "paid" ? await fulfillPaidOrder(verifiedOrder, { notifyGoods: true }) : verifiedOrder);
+}));
+
+app.post("/virtual-payment/notify", asyncRoute(async (req, res) => {
+  const payload = getVirtualNotifyPayload(req);
+  const event = payload.Event || payload.event || "";
+  const orderId = pickVirtualNotifyOrderId(payload);
+  const order = orderId ? await findById("orders", orderId) : null;
+  logInfo("[virtual-payment/notify]", {
+    event,
+    orderId,
+    hasExistingOrder: Boolean(order),
+  });
+
+  if (event === "xpay_goods_deliver_notify" && order) {
+    const paidOrder = await upsert("orders", {
+      ...order,
+      status: "paid",
+      transactionId: payload.TransactionId || payload.WxOrderId || order.transactionId || "",
+      paidAt: payload.PaidTime ? new Date(Number(payload.PaidTime) * 1000).toISOString() : order.paidAt || now(),
+      paymentNotify: payload,
+      virtualGoodsProvidedAt: now(),
+    }, "orderId");
+    await fulfillPaidOrder(paidOrder);
+  } else if (event === "xpay_refund_notify" && order) {
+    const refunded = Number(payload.RetCode || 0) === 0;
+    await upsert("orders", {
+      ...order,
+      status: refunded ? "refunded" : order.status,
+      refundedAt: refunded ? (payload.RefundSuccTimestamp ? new Date(Number(payload.RefundSuccTimestamp) * 1000).toISOString() : now()) : order.refundedAt || "",
+      paymentNotify: payload,
+    }, "orderId");
+  } else if (event === "xpay_complaint_notify") {
+    logWarn("[virtual-payment/complaint]", {
+      orderId,
+      complaintId: payload.ComplaintId || "",
+      requestId: payload.RequestId || "",
+    });
+  }
+
+  res.send({
+    ErrCode: 0,
+    ErrMsg: "success",
+  });
 }));
 
 app.post("/orders/list", asyncRoute(async (req, res) => {
@@ -424,47 +677,15 @@ app.post("/entitlements/status", asyncRoute(async (req, res) => {
 }));
 
 app.post("/membership/activate", asyncRoute(async (req, res) => {
-  const userId = `user_${getUserId(req)}`;
-  const openId = getOpenId(req);
   const order = req.body.orderId ? await findById("orders", req.body.orderId) : null;
-  const membershipPlan = order ? getMembershipPlan(order.productType) : null;
-  if (!order || order.status !== "paid" || !membershipPlan) {
+  if (!order || order.status !== "paid" || !getMembershipPlan(order.productType)) {
     res.status(400).send({
       code: 400,
       message: "会员订单未完成支付",
     });
     return;
   }
-  const memberships = await filterByUser("memberships", userId, openId);
-  const usedMembership = memberships.find((item) => item.sourceOrderId === order.orderId);
-  if (usedMembership) {
-    res.status(409).send({
-      code: 409,
-      message: "该会员订单已使用，请重新支付开通",
-    });
-    return;
-  }
-  const startedAt = now();
-  const latestActive = memberships
-    .filter((item) => item.status === "active" && item.expiresAt)
-    .sort((a, b) => new Date(b.expiresAt).getTime() - new Date(a.expiresAt).getTime())[0];
-  const baseTime = latestActive && new Date(latestActive.expiresAt).getTime() > Date.now()
-    ? new Date(latestActive.expiresAt).getTime()
-    : Date.now();
-  const durationDays = Number(membershipPlan.durationDays || 30);
-  const expiresAt = new Date(baseTime + durationDays * 24 * 60 * 60 * 1000).toISOString();
-  const membership = await upsert("memberships", {
-    membershipId: createId("membership"),
-    userId,
-    openId,
-    planType: membershipPlan.planType,
-    productType: order.productType,
-    durationDays,
-    status: "active",
-    startedAt,
-    expiresAt,
-    sourceOrderId: order.orderId,
-  }, "membershipId");
+  const membership = await activateMembershipForOrder(order);
   ok(res, membership);
 }));
 
@@ -692,7 +913,8 @@ app.get("/debug/db", debugRoute(async (req, res) => {
 
 app.get("/debug/payment", debugRoute(async (req, res) => {
   ok(res, {
-    wechatPay: getPaymentConfigStatus(),
+    wechatPayLegacy: getPaymentConfigStatus(),
+    virtualPayment: getVirtualPaymentConfigStatus(),
   });
 }));
 
