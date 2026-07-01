@@ -200,8 +200,6 @@ async function notifyVirtualGoodsProvided(order) {
   return xpayRequest("/xpay/notify_provide_goods", {
     order_id: order.orderId,
     env: Number(order.virtualEnv !== undefined ? order.virtualEnv : config.env),
-  }, {
-    withPaySig: false,
   });
 }
 
