@@ -4,6 +4,11 @@ function getEnv(name, fallback = "") {
   return process.env[name] || fallback;
 }
 
+function getNumberEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 function safeJsonParse(text) {
   const content = typeof text === "string" ? text.trim() : "";
   const start = content.indexOf("{");
@@ -213,6 +218,9 @@ async function callOpenAICompatible(moduleName, payload, options = {}) {
   const baseUrl = getEnv("OPENAI_BASE_URL");
   const apiKey = getEnv("OPENAI_API_KEY");
   const model = options.model || getEnv(moduleName === "deepReport" ? "OPENAI_DEEP_REPORT_MODEL" : "OPENAI_MODEL", getEnv("OPENAI_MODEL", "gpt-5.4-mini"));
+  const timeoutEnvName = moduleName === "deepReport" ? "OPENAI_DEEP_REPORT_TIMEOUT_MS" : "OPENAI_REQUEST_TIMEOUT_MS";
+  const timeoutMs = Number(options.timeoutMs)
+    || getNumberEnv(timeoutEnvName, getNumberEnv("OPENAI_REQUEST_TIMEOUT_MS", 45000));
 
   if (!baseUrl || !apiKey) {
     return null;
@@ -231,14 +239,31 @@ async function callOpenAICompatible(moduleName, payload, options = {}) {
     requestBody.response_format = { type: "json_object" };
   }
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(requestBody)
-  });
+  const controller = typeof AbortController !== "undefined" && timeoutMs > 0
+    ? new AbortController()
+    : null;
+  const timer = controller
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+  let response;
+  try {
+    response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller ? controller.signal : undefined,
+    });
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      throw new Error(`AI 请求超时：${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 
   const responseText = await response.text();
   const data = safeJsonParse(responseText);
